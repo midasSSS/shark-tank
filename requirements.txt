@@ -4,3 +4,4 @@ PyMuPDF==1.27.1
 crewai==1.9.3
 anthropic==0.84.0
 tavily-python==0.7.22
+supabase>=2.15,<3

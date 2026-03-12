@@ -9,10 +9,11 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 import streamlit as st
 from dotenv import load_dotenv
 import fitz  # PyMuPDF
+from supabase import Client, create_client
 
 # CrewAI telemetry tries to register process signal handlers, which breaks
 # when analysis runs in a worker thread to keep the Streamlit UI responsive.
@@ -104,8 +105,136 @@ def sanitize_filename(name: str) -> str:
     return re.sub(r'[^\w\s-]', '', name).strip().replace(' ', '_')
 
 
-def save_memo(company_name: str, memo_content: str) -> str:
-    """Save investment memo to file and return filepath."""
+def is_supabase_enabled() -> bool:
+    """Return whether cloud auth and storage are configured."""
+    return bool(get_secret("SUPABASE_URL") and get_secret("SUPABASE_ANON_KEY"))
+
+
+def get_supabase_client() -> Optional[Client]:
+    """Create or return the Supabase client for this session."""
+    if not is_supabase_enabled():
+        return None
+
+    if "supabase_client" not in st.session_state:
+        st.session_state.supabase_client = create_client(
+            get_secret("SUPABASE_URL"),
+            get_secret("SUPABASE_ANON_KEY")
+        )
+
+        auth_tokens = st.session_state.get("auth_tokens")
+        if auth_tokens:
+            try:
+                st.session_state.supabase_client.auth.set_session(
+                    auth_tokens["access_token"],
+                    auth_tokens["refresh_token"]
+                )
+            except Exception:
+                st.session_state.auth_tokens = None
+                st.session_state.auth_user = None
+
+    return st.session_state.supabase_client
+
+
+def persist_auth_session(session: Any, user: Any) -> None:
+    """Persist auth details into Streamlit session state."""
+    st.session_state.auth_tokens = {
+        "access_token": session.access_token,
+        "refresh_token": session.refresh_token,
+    }
+    st.session_state.auth_user = {
+        "id": str(user.id),
+        "email": user.email,
+    }
+
+
+def clear_auth_session() -> None:
+    """Clear auth details and app state for logout."""
+    st.session_state.auth_tokens = None
+    st.session_state.auth_user = None
+    st.session_state.selected_memo_path = None
+    st.session_state.memo_history_selection = None
+    st.session_state.view_mode = "new"
+
+
+def get_current_user() -> Optional[Dict[str, str]]:
+    """Return the authenticated user when Supabase is enabled."""
+    return st.session_state.get("auth_user")
+
+
+def sign_in_user(email: str, password: str) -> tuple[bool, str]:
+    """Sign in against Supabase email/password auth."""
+    client = get_supabase_client()
+    if not client:
+        return False, "Supabase is not configured."
+
+    try:
+        response = client.auth.sign_in_with_password({
+            "email": email,
+            "password": password,
+        })
+        if response.session and response.user:
+            persist_auth_session(response.session, response.user)
+            st.session_state.view_mode = "new"
+            st.session_state.selected_memo_path = None
+            st.session_state.memo_history_selection = None
+            return True, ""
+        return False, "Login failed."
+    except Exception as exc:
+        return False, str(exc)
+
+
+def sign_up_user(email: str, password: str) -> tuple[bool, str]:
+    """Create a new Supabase auth user."""
+    client = get_supabase_client()
+    if not client:
+        return False, "Supabase is not configured."
+
+    try:
+        response = client.auth.sign_up({
+            "email": email,
+            "password": password,
+        })
+        if response.session and response.user:
+            persist_auth_session(response.session, response.user)
+            st.session_state.view_mode = "new"
+            return True, "Account created and signed in."
+        return True, "Account created. Check your email if confirmation is enabled."
+    except Exception as exc:
+        return False, str(exc)
+
+
+def sign_out_user() -> None:
+    """Sign out the current Supabase user."""
+    client = get_supabase_client()
+    if client:
+        try:
+            client.auth.sign_out()
+        except Exception:
+            pass
+    clear_auth_session()
+
+
+def parse_timestamp(value: Any) -> Optional[datetime]:
+    """Parse timestamps from local files or database rows."""
+    if isinstance(value, datetime):
+        return value
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def format_history_timestamp(timestamp: Optional[datetime]) -> str:
+    """Format timestamps consistently for the sidebar."""
+    if not timestamp:
+        return "Unknown date"
+    return timestamp.strftime("%b %d, %Y %H:%M")
+
+
+def save_memo_locally(company_name: str, memo_content: str) -> str:
+    """Save investment memo to local file storage and return filepath."""
     output_dir = Path("./investment_memos")
     output_dir.mkdir(exist_ok=True)
 
@@ -119,20 +248,76 @@ def save_memo(company_name: str, memo_content: str) -> str:
     return str(filepath)
 
 
-def list_saved_memos() -> List[Path]:
-    """Return saved memo files in reverse chronological order."""
+def save_memo(
+    company_name: str,
+    memo_content: str,
+    description: str = "",
+    terms: str = "",
+) -> Dict[str, Any]:
+    """Save investment memo to cloud storage when configured, else local disk."""
+    current_user = get_current_user()
+    client = get_supabase_client()
+
+    if client and current_user:
+        result = client.table("memos").insert({
+            "owner_id": current_user["id"],
+            "company_name": company_name,
+            "description": description,
+            "terms": terms,
+            "memo_content": memo_content,
+        }).execute()
+        row = result.data[0]
+        return {
+            "id": row["id"],
+            "company_name": row["company_name"],
+            "created_at": parse_timestamp(row.get("created_at")),
+            "memo_content": row["memo_content"],
+            "storage": "cloud",
+        }
+
+    filepath = save_memo_locally(company_name, memo_content)
+    company_name, created_at = parse_memo_metadata(Path(filepath))
+    return {
+        "id": filepath,
+        "company_name": company_name or Path(filepath).stem,
+        "created_at": created_at,
+        "memo_content": memo_content,
+        "storage": "local",
+    }
+
+
+def list_saved_memos() -> List[Dict[str, Any]]:
+    """Return saved memos in reverse chronological order."""
+    current_user = get_current_user()
+    client = get_supabase_client()
+
+    if client and current_user:
+        result = client.table("memos").select(
+            "id, company_name, created_at"
+        ).order("created_at", desc=True).execute()
+        return [
+            {
+                "id": row["id"],
+                "company_name": row["company_name"],
+                "created_at": parse_timestamp(row.get("created_at")),
+                "storage": "cloud",
+            }
+            for row in result.data
+        ]
+
     output_dir = Path("./investment_memos")
     if not output_dir.exists():
         return []
-    return sorted(output_dir.glob("*.md"), key=lambda path: path.stat().st_mtime, reverse=True)
-
-
-def format_memo_history_label(filepath: Path) -> str:
-    """Create a readable sidebar label from a saved memo filename."""
-    company_name, timestamp = parse_memo_metadata(filepath)
-    if not company_name or not timestamp:
-        return filepath.name
-    return f"{company_name} • {timestamp.strftime('%b %d, %Y %H:%M')}"
+    paths = sorted(output_dir.glob("*.md"), key=lambda path: path.stat().st_mtime, reverse=True)
+    return [
+        {
+            "id": str(path),
+            "company_name": parse_memo_metadata(path)[0] or path.stem,
+            "created_at": parse_memo_metadata(path)[1],
+            "storage": "local",
+        }
+        for path in paths
+    ]
 
 
 def parse_memo_metadata(filepath: Path) -> tuple[Optional[str], Optional[datetime]]:
@@ -148,9 +333,38 @@ def parse_memo_metadata(filepath: Path) -> tuple[Optional[str], Optional[datetim
     return company_name, timestamp
 
 
-def load_memo(filepath: Path) -> str:
-    """Load a saved memo from disk."""
-    return filepath.read_text(encoding="utf-8")
+def load_memo(memo_id: str) -> Optional[Dict[str, Any]]:
+    """Load a memo from cloud storage or local disk."""
+    current_user = get_current_user()
+    client = get_supabase_client()
+
+    if client and current_user:
+        result = client.table("memos").select(
+            "id, company_name, created_at, memo_content"
+        ).eq("id", memo_id).limit(1).execute()
+        if result.data:
+            row = result.data[0]
+            return {
+                "id": row["id"],
+                "company_name": row["company_name"],
+                "created_at": parse_timestamp(row.get("created_at")),
+                "memo_content": row["memo_content"],
+                "storage": "cloud",
+            }
+        return None
+
+    filepath = Path(memo_id)
+    if not filepath.exists():
+        return None
+    company_name, created_at = parse_memo_metadata(filepath)
+    return {
+        "id": str(filepath),
+        "company_name": company_name or filepath.stem,
+        "created_at": created_at,
+        "memo_content": filepath.read_text(encoding="utf-8"),
+        "storage": "local",
+        "filename": filepath.name,
+    }
 
 
 def open_selected_history_memo() -> None:
@@ -704,13 +918,45 @@ def main():
     if "memo_history_selection" not in st.session_state:
         st.session_state.memo_history_selection = None
 
+    if is_supabase_enabled() and not get_current_user():
+        st.subheader("Private Access")
+        st.caption("Sign in to access your own memo history and keep analyses private.")
+
+        auth_mode = st.tabs(["Sign In", "Create Account"])
+        with auth_mode[0]:
+            with st.form("sign_in_form"):
+                email = st.text_input("Email", key="sign_in_email")
+                password = st.text_input("Password", type="password", key="sign_in_password")
+                submit_sign_in = st.form_submit_button("Sign In", use_container_width=True)
+            if submit_sign_in:
+                success, message = sign_in_user(email, password)
+                if success:
+                    st.rerun()
+                st.error(message)
+
+        with auth_mode[1]:
+            with st.form("sign_up_form"):
+                email = st.text_input("Email", key="sign_up_email")
+                password = st.text_input("Password", type="password", key="sign_up_password")
+                submit_sign_up = st.form_submit_button("Create Account", use_container_width=True)
+            if submit_sign_up:
+                success, message = sign_up_user(email, password)
+                if success:
+                    if get_current_user():
+                        st.rerun()
+                    st.success(message)
+                else:
+                    st.error(message)
+        return
+
     saved_memos = list_saved_memos()
+    memo_ids = [memo["id"] for memo in saved_memos]
     if saved_memos and not st.session_state.selected_memo_path:
-        st.session_state.selected_memo_path = str(saved_memos[0])
+        st.session_state.selected_memo_path = saved_memos[0]["id"]
     if (
         saved_memos
         and st.session_state.view_mode == "history"
-        and st.session_state.selected_memo_path in [str(path) for path in saved_memos]
+        and st.session_state.selected_memo_path in memo_ids
     ):
         st.session_state.memo_history_selection = st.session_state.selected_memo_path
 
@@ -722,21 +968,19 @@ def main():
             st.session_state.view_mode = "new"
             st.session_state.memo_history_selection = None
         st.markdown('</div>', unsafe_allow_html=True)
+        current_user = get_current_user()
+        if current_user:
+            st.caption(f"Signed in as {current_user['email']}")
+            if st.button("Sign Out", use_container_width=True):
+                sign_out_user()
+                st.rerun()
         st.write("")
         st.header("🗂️ Analysis History")
         if saved_memos:
             st.caption("Choose a memo")
-            memo_options = [str(path) for path in saved_memos]
-            memo_titles = []
-            memo_dates = []
-            for memo_path in saved_memos:
-                company_name, timestamp = parse_memo_metadata(memo_path)
-                memo_titles.append(company_name or memo_path.stem)
-                memo_dates.append(
-                    timestamp.strftime('%b %d, %Y %H:%M')
-                    if timestamp
-                    else memo_path.name
-                )
+            memo_options = memo_ids
+            memo_titles = [memo["company_name"] for memo in saved_memos]
+            memo_dates = [format_history_timestamp(memo["created_at"]) for memo in saved_memos]
 
             selected_index = (
                 memo_options.index(st.session_state.selected_memo_path)
@@ -762,20 +1006,20 @@ def main():
             st.caption("No saved analyses yet. Run one and it will appear here.")
 
     if st.session_state.view_mode == "history" and st.session_state.selected_memo_path:
-        selected_memo_file = Path(st.session_state.selected_memo_path)
-        if selected_memo_file.exists():
+        selected_memo = load_memo(st.session_state.selected_memo_path)
+        if selected_memo:
             st.divider()
             with st.container(border=True):
                 st.markdown('<div class="memo-shell">', unsafe_allow_html=True)
-                saved_memo_content = format_memo_for_display(load_memo(selected_memo_file))
+                saved_memo_content = format_memo_for_display(selected_memo["memo_content"])
                 st.markdown(saved_memo_content)
                 st.download_button(
                     label="⬇️ Download Saved Memo",
                     data=saved_memo_content,
-                    file_name=selected_memo_file.name,
+                    file_name=f"{sanitize_filename(selected_memo['company_name'])}_memo.md",
                     mime="text/markdown",
                     use_container_width=True,
-                    key=f"download_saved_{selected_memo_file.name}"
+                    key=f"download_saved_{selected_memo['id']}"
                 )
                 st.markdown("</div>", unsafe_allow_html=True)
         else:
@@ -958,11 +1202,21 @@ def main():
                 st.markdown(memo_content)
 
                 # Save memo
-                filepath = save_memo(company_name, memo_content)
-                st.session_state.selected_memo_path = filepath
-                st.session_state.memo_history_selection = filepath
+                saved_memo = save_memo(
+                    company_name,
+                    memo_content,
+                    description=description or "",
+                    terms=terms or "",
+                )
+                st.session_state.selected_memo_path = saved_memo["id"]
+                st.session_state.memo_history_selection = saved_memo["id"]
                 st.session_state.view_mode = "history"
-                st.success(f"💾 Memo saved to: `{filepath}`")
+                save_target = (
+                    "private cloud history"
+                    if saved_memo["storage"] == "cloud"
+                    else saved_memo["id"]
+                )
+                st.success(f"💾 Memo saved to: `{save_target}`")
 
                 # Download button
                 st.download_button(

@@ -9,6 +9,8 @@ Create a `.env` file with:
 ```env
 ANTHROPIC_API_KEY=...
 TAVILY_API_KEY=...
+SUPABASE_URL=...
+SUPABASE_ANON_KEY=...
 ```
 
 Then run:
@@ -28,17 +30,37 @@ streamlit run run.py
 ```toml
 ANTHROPIC_API_KEY = "your_key_here"
 TAVILY_API_KEY = "your_key_here"
+SUPABASE_URL = "https://your-project-ref.supabase.co"
+SUPABASE_ANON_KEY = "your_supabase_anon_key"
 ```
 
 5. Deploy.
 
 The app reads secrets from either environment variables or Streamlit secrets, so the same code works locally and in Streamlit Cloud.
 
+## Supabase setup
+
+This app now supports private per-user memo history when Supabase is configured.
+
+1. Create a Supabase project.
+2. In Supabase Auth, enable Email auth.
+3. Run the SQL in [`supabase_schema.sql`](/Users/macallan/PycharmProjects/playground/investment-analyzer/supabase_schema.sql) in the SQL editor.
+4. Copy your project URL and anon key into local `.env` or Streamlit secrets.
+5. Deploy or restart the app.
+
+With Supabase enabled:
+
+- users must sign in before using the app
+- each user only sees their own memos
+- memo history persists across restarts and redeploys
+
+Without Supabase configured, the app falls back to local file storage.
+
 ## Current cloud limitation
 
-Memo history is currently stored on local disk in `investment_memos/`. That works locally, but on most free cloud hosts it is not durable across restarts or redeploys.
+Uploaded source PDFs are still transient and are not stored in cloud storage yet. Only the final memo content is persisted to Supabase.
 
-If you want reliable cloud history, the next step is to move memo storage to a database or object store.
+If you want reliable cloud document retention too, the next step is to add object storage for uploaded files.
 
 ## Main dependencies
 
@@ -46,5 +68,6 @@ If you want reliable cloud history, the next step is to move memo storage to a d
 - `crewai`
 - `anthropic`
 - `tavily-python`
+- `supabase`
 - `PyMuPDF`
 - `python-dotenv`

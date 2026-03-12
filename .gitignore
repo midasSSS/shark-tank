@@ -5,3 +5,4 @@ __pycache__/
 venv/
 investment_memos/
 .DS_Store
+.idea/
