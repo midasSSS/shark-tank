@@ -12,6 +12,31 @@ from test_analyzer import economics, assessment
 
 
 class UITests(unittest.TestCase):
+    def test_auth_uses_password_manager_metadata_and_separate_screens(self):
+        source = """
+import streamlit as st
+from types import SimpleNamespace
+from analyzer.ui import auth
+
+app = SimpleNamespace(
+    is_supabase_enabled=lambda: True,
+    get_current_user=lambda: None,
+    sign_in_user=lambda email, password: (False, "Not signed in"),
+    sign_up_user=lambda email, password: (False, "Not signed up"),
+)
+auth(app)
+"""
+        app = AppTest.from_string(source).run(timeout=20)
+        self.assertFalse(app.exception)
+        self.assertEqual([field.label for field in app.text_input], ["Email", "Password"])
+        self.assertEqual([field.autocomplete for field in app.text_input], ["username", "current-password"])
+        self.assertNotIn("New password", [field.label for field in app.text_input])
+
+        next(button for button in app.button if button.label == "Create an account").click().run(timeout=20)
+        self.assertEqual([field.label for field in app.text_input], ["Email", "New password"])
+        self.assertEqual([field.autocomplete for field in app.text_input], ["username", "new-password"])
+        self.assertNotIn("Password", [field.label for field in app.text_input])
+
     def test_upload_only_form_and_missing_file_validation(self):
         with patch.dict(os.environ, {"LOCAL_MODE": "1"}):
             app = AppTest.from_file("run.py").run(timeout=20)

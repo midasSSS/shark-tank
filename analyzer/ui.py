@@ -67,16 +67,42 @@ def analysis_header(record, repo, manager, owner, title=None, date=None, pdf_mar
 def auth(app):
     if not app.is_supabase_enabled() or app.get_current_user():
         return True
+
+    mode = st.session_state.get("auth_mode", "sign_in")
     st.subheader("Private access")
-    for tab, label in zip(st.tabs(["Sign in", "Create account"]), ["Sign in", "Create account"]):
-        with tab, st.form(label):
-            email = st.text_input("Email", key=label + "email")
-            password = st.text_input("Password", type="password", key=label + "password")
-            if st.form_submit_button(label):
-                ok, message = (app.sign_in_user if label == "Sign in" else app.sign_up_user)(email, password)
-                if ok and app.get_current_user():
-                    st.rerun()
-                (st.success if ok else st.error)(message)
+
+    if mode == "sign_up":
+        st.caption("Create an account for this private workspace.")
+        with st.form("create-account-form"):
+            email = st.text_input("Email", key="sign-up-email", autocomplete="username")
+            password = st.text_input(
+                "New password", type="password", key="sign-up-password", autocomplete="new-password"
+            )
+            submitted = st.form_submit_button("Create account", type="primary")
+        if submitted:
+            ok, message = app.sign_up_user(email, password)
+            if ok and app.get_current_user():
+                st.rerun()
+            (st.success if ok else st.error)(message)
+        if st.button("Back to sign in", key="show-sign-in"):
+            st.session_state.auth_mode = "sign_in"
+            st.rerun()
+    else:
+        st.caption("Sign in to your private workspace.")
+        with st.form("sign-in-form"):
+            email = st.text_input("Email", key="sign-in-email", autocomplete="username")
+            password = st.text_input(
+                "Password", type="password", key="sign-in-password", autocomplete="current-password"
+            )
+            submitted = st.form_submit_button("Sign in", type="primary")
+        if submitted:
+            ok, message = app.sign_in_user(email, password)
+            if ok and app.get_current_user():
+                st.rerun()
+            (st.success if ok else st.error)(message)
+        if st.button("Create an account", key="show-sign-up"):
+            st.session_state.auth_mode = "sign_up"
+            st.rerun()
     return False
 
 
