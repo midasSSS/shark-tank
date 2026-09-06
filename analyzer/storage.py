@@ -2,6 +2,7 @@ import json
 import base64
 import hashlib
 import os
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -72,7 +73,9 @@ class Repository:
             state["updated_at"] = now()
             payload = json.dumps(state, ensure_ascii=False, allow_nan=False)
             if self.client:
-                self.client.table("memos").update({"memo_content": payload}).eq("id", state["id"]).eq("owner_id", self.owner).execute()
+                self.client.table("memos").update({
+                    "company_name": state["company_name"], "memo_content": payload
+                }).eq("id", state["id"]).eq("owner_id", self.owner).execute()
             else:
                 self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
                 target = self.root / f"{state['id']}.json"
@@ -81,6 +84,40 @@ class Repository:
                     os.chmod(temp, 0o600)
                     file.write(payload)
                 temp.replace(target)
+
+    def rename(self, identifier: str, company_name: str, legacy: bool = False) -> str:
+        """Rename an analysis within the current owner's storage scope."""
+        company_name = " ".join(company_name.split()).strip()
+        if not company_name:
+            raise ValueError("Company name is required.")
+        if len(company_name) > 120:
+            raise ValueError("Company name must be 120 characters or fewer.")
+        if not legacy:
+            state = self.load(identifier)
+            if state is None:
+                raise ValueError("Analysis was not found.")
+            state["company_name"] = company_name
+            state.setdefault("inputs", {})["company_name"] = company_name
+            self.save(state)
+            return identifier
+        if self.client:
+            self.client.table("memos").update({"company_name": company_name}).eq(
+                "id", identifier
+            ).eq("owner_id", self.owner).execute()
+            return identifier
+        path = Path(identifier)
+        if path.is_symlink() or path.resolve().parent != self.root.resolve().parent or path.suffix != ".md":
+            raise ValueError("Not a local history memo.")
+        suffix = ""
+        match = re.search(r"(_\d{8}_\d{6})$", path.stem)
+        if match:
+            suffix = match.group(1)
+        slug = "_".join(part for part in re.sub(r"[^\w\s-]", "", company_name).split())
+        target = path.with_name(f"{slug or 'Untitled_company'}{suffix}.md")
+        if target != path and target.exists():
+            raise ValueError("An analysis with this name already exists.")
+        path.rename(target)
+        return str(target)
 
     def load(self, identifier: str) -> dict | None:
         if self.client:

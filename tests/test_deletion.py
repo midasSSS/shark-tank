@@ -8,6 +8,22 @@ from analyzer.storage import Repository
 
 
 class DeletionTests(unittest.TestCase):
+    def test_rename_updates_current_and_legacy_local_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            history = Path(directory) / "history"
+            repo = Repository(root=history / "runs")
+            record = repo.create({"company_name": "Before", "model": "test"}, [])
+            repo.rename(record["id"], "After")
+            self.assertEqual(repo.load(record["id"])["company_name"], "After")
+            self.assertEqual(repo.load(record["id"])["inputs"]["company_name"], "After")
+
+            history.mkdir(exist_ok=True)
+            legacy = history / "Old_Name_20260906_120000.md"
+            legacy.write_text("legacy memo")
+            renamed = repo.rename(str(legacy), "New Name", legacy=True)
+            self.assertEqual(Path(renamed).name, "New_Name_20260906_120000.md")
+            self.assertTrue(Path(renamed).exists())
+
     def test_only_selected_local_record_removed(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Repository(root=Path(directory) / "runs")

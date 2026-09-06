@@ -39,6 +39,26 @@ def delete_analysis(record, repo, manager, owner):
     st.rerun()
 
 
+@st.dialog("Rename analysis")
+def rename_analysis(record, repo):
+    with st.form("rename-analysis-form"):
+        company_name = st.text_input("Company name", value=record["company_name"], max_chars=120)
+        submitted = st.form_submit_button("Save name", type="primary")
+    if submitted:
+        try:
+            identifier = repo.rename(record["id"], company_name, legacy="format" not in record)
+        except ValueError as exc:
+            st.error(str(exc))
+            return
+        except Exception:
+            st.error("Could not rename this analysis. Please try again.")
+            return
+        if st.session_state.get("legacy_memo") == record["id"]:
+            st.session_state.legacy_memo = identifier
+        st.session_state.history_notice = "Analysis renamed."
+        st.rerun()
+
+
 def analysis_header(record, repo, manager, owner, title=None, date=None, pdf_markdown=None):
     title = title or record["company_name"]
     date = date or str(record.get("created_at", ""))[:10]
@@ -55,6 +75,8 @@ def analysis_header(record, repo, manager, owner, title=None, date=None, pdf_mar
                 filename = re.sub(r"[^A-Za-z0-9._-]+", "-", title).strip("-").lower() or "investment-memo"
                 st.download_button("Save as PDF", pdf, file_name=f"{filename}.pdf",
                                    mime="application/pdf", icon=":material/picture_as_pdf:", width="stretch")
+            if st.button("Rename", icon=":material/edit:", key="rename-analysis-" + record["id"], width="stretch"):
+                rename_analysis(record, repo)
             if st.button("Delete analysis", icon=":material/delete:", key="delete-analysis-" + record["id"],
                          disabled=manager.active((owner, record["id"])), width="stretch"):
                 delete_analysis(record, repo, manager, owner)
@@ -202,7 +224,7 @@ def main(app):
                 st.success(notice)
         except Exception:
             st.error("Could not load private history. Check your storage connection.")
-        if user and st.button("Sign out"):
+        if user and st.button("Sign out", key="sign-out", icon=":material/logout:", width="stretch"):
             active = st.session_state.get("active_run")
             if active:
                 manager.stop((owner, active))
@@ -215,7 +237,8 @@ def main(app):
         memo = app.load_memo(st.session_state.legacy_memo)
         if memo:
             fallback_date = str(memo.get("created_at", ""))[:10]
-            title, date, body = legacy_parts(memo["memo_content"], memo["company_name"], fallback_date)
+            _, date, body = legacy_parts(memo["memo_content"], memo["company_name"], fallback_date)
+            title = memo["company_name"]
             analysis_header(memo, repo, manager, owner, title, date, body)
             st.markdown(app.format_memo_for_display(body))
         return
@@ -239,7 +262,8 @@ def main(app):
                 memo = app.load_memo(identifier)
                 if memo:
                     fallback_date = str(memo.get("created_at", ""))[:10]
-                    title, date, body = legacy_parts(memo["memo_content"], memo["company_name"], fallback_date)
+                    _, date, body = legacy_parts(memo["memo_content"], memo["company_name"], fallback_date)
+                    title = memo["company_name"]
                     analysis_header(memo, repo, manager, owner, title, date, body)
                     st.markdown(app.format_memo_for_display(body))
                 return
@@ -276,8 +300,9 @@ def main(app):
         return
 
     with st.form("decision_input"):
+        company_name = st.text_input("Company name", placeholder="Optional — inferred from the first filename")
         files = st.file_uploader("Company materials", type=["pdf", "csv", "tsv", "xlsx", "txt", "md"], accept_multiple_files=True)
-        st.caption("Upload files for one company. The first filename becomes the company name. 15 MB per file, 25 MB total.")
+        st.caption("Upload files for one company. If the name is blank, the first filename is used. 15 MB per file, 25 MB total.")
         submit = st.form_submit_button("Analyze investment", type="primary", width="stretch", icon=":material/arrow_forward:")
     if submit:
         if not files:
@@ -295,7 +320,9 @@ def main(app):
             return
         # Avoid collisions in document downloads and redundant extraction.
         documents = list({item["data"]: item for item in documents}.values())
-        name = re.sub(r"[_\s]+", " ", Path(files[0].name).stem).strip() or "Untitled company"
+        name = " ".join(company_name.split()).strip()
+        if not name:
+            name = re.sub(r"[_\s]+", " ", Path(files[0].name).stem).strip() or "Untitled company"
         inputs = dict(company_name=name, website="", stage="Infer from evidence", business_model="Infer from evidence",
                       description="", terms="", thesis=app.INVESTMENT_THESIS,
                       model=os.getenv("ANALYSIS_MODEL", "claude-sonnet-4-5-20250929"), max_requests=80,
