@@ -193,6 +193,22 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(pipe.ask("Test wrapped schema", {}, Evidence)["facts"], [])
         self.assertEqual(self.state["request_count"], 1)
 
+    def test_model_provider_failure_is_retried(self):
+        attempts = 0
+        def create(**kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise ConnectionError("temporary")
+            return SimpleNamespace(
+                content=[SimpleNamespace(type="text", text='{"facts": [], "gaps": [], "conflicts": []}')],
+                stop_reason="end_turn", usage=SimpleNamespace(input_tokens=10, output_tokens=5)
+            )
+        client = SimpleNamespace(messages=SimpleNamespace(create=create))
+        pipe = Pipeline(self.repo, self.state, "fake", None, client=client)
+        self.assertEqual(pipe.ask("Test provider retry", {}, Evidence)["facts"], [])
+        self.assertEqual(attempts, 2)
+
     def test_summary_length_and_markdown_injection(self):
         decision = {"reasons": ["word " * 200 + "![tracking](https://example.com)"], "main_risk": "risk " * 60,
                     "confidence": "medium", "confidence_reason": "detail " * 50}

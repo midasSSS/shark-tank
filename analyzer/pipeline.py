@@ -2,6 +2,7 @@ import base64
 import json
 import re
 import threading
+import time
 from urllib.parse import urlparse
 
 from anthropic import Anthropic
@@ -31,6 +32,10 @@ class RequestBudgetExceeded(Exception):
 
 
 class EvidenceContextTooLarge(Exception):
+    pass
+
+
+class ProviderRequestFailed(Exception):
     pass
 
 
@@ -73,12 +78,19 @@ class Pipeline:
                 raise RequestBudgetExceeded()
             self.state["request_count"] = self.state.get("request_count", 0) + 1
             self.repo.save(self.state)
-            response = self.client.messages.create(model=self.state["model"], max_tokens=8000,
-                temperature=0, system=SYSTEM,
-                messages=[{"role": "user", "content": prompt + (
-                    "\nPrevious output failed validation. Return only one complete JSON object matching the schema; do not add prose or Markdown."
-                    if attempt else ""
-                )}])
+            try:
+                response = self.client.messages.create(model=self.state["model"], max_tokens=8000,
+                    temperature=0, system=SYSTEM,
+                    messages=[{"role": "user", "content": prompt + (
+                        "\nPrevious output failed validation. Return only one complete JSON object matching the schema; do not add prose or Markdown."
+                        if attempt else ""
+                    )}])
+            except Exception as error:
+                last_error = error
+                if attempt < 2:
+                    time.sleep(0.5 * (attempt + 1))
+                    continue
+                raise ProviderRequestFailed() from error
             usage = response.usage
             self.state["usage"].append({"role": role[:100], "input_tokens": usage.input_tokens,
                                         "output_tokens": usage.output_tokens, "at": now()})
@@ -131,6 +143,9 @@ class Pipeline:
                 gaps.append("A public research query failed; coverage is incomplete.")
         if not sources:
             gaps.append("No usable public sources were retrieved.")
+        if len(sources) > 12:
+            gaps.append("Public research was limited to the first 12 usable source segments to keep analysis reliable.")
+            sources = sources[:12]
         return {"sources": sources, "gaps": gaps}
 
     def ingest(self):
@@ -179,12 +194,16 @@ class Pipeline:
         try:
             docs = self.step("ingestion", "Reading all document pages and tables", self.ingest)
             web = self.step("research", "Research agent: retrieving public sources", self.research)
+            if len(web["sources"]) > 12:
+                web = dict(web, sources=web["sources"][:12], gaps=web["gaps"] + [
+                    "Public research was limited to the first 12 usable source segments to keep analysis reliable."
+                ])
             sources = docs["sources"] + web["sources"]
             facts, gaps, conflicts, errors = [], docs["gaps"] + web["gaps"], [], []
-            for offset in range(0, len(sources), 4):
-                batch = sources[offset:offset + 4]
+            for offset in range(0, len(sources), 2):
+                batch = sources[offset:offset + 2]
                 batch_id = digest("|".join(s["id"] for s in batch).encode())[:16]
-                result = self.step(f"extract:{batch_id}", f"Evidence agent: sources {offset + 1}–{min(offset + 4, len(sources))} of {len(sources)}",
+                result = self.step(f"extract:{batch_id}", f"Evidence agent: sources {offset + 1}–{min(offset + 2, len(sources))} of {len(sources)}",
                                    lambda batch=batch: self.extract_batch(batch))
                 facts.extend(result["facts"])
                 gaps.extend(result["gaps"])
@@ -258,6 +277,7 @@ class Pipeline:
                 "RequestBudgetExceeded": "The model-request limit was reached. Increase the run limit below to resume.",
                 "EvidenceContextTooLarge": "The collected evidence exceeds the model context limit. No evidence was silently discarded; this run cannot produce a reliable verdict.",
                 "APITimeoutError": "The model request timed out. Retry to resume saved steps.",
+                "ProviderRequestFailed": "The model provider could not complete a request after retries. Resume to continue from the saved step.",
                 "ValueError": "An input or model response failed validation. Check file formats and retry.",
             }.get(type(exc).__name__, "A processing or provider request failed. Completed steps were retained.")
         finally:
