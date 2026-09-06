@@ -1,73 +1,82 @@
-# Shark Tank
+# Investment Analyzer
 
-Private Streamlit app for angel-investment diligence using CrewAI, Anthropic, Tavily, and uploaded startup documents.
+Private Streamlit app for a short **INVEST / PASS** decision on early-stage, growth-stage and pre-IPO companies.
 
-## Local run
+The recommendation must be supported by **credible 100× net investor potential** or **evidence-backed downside protection**. It uses available documents and public information; it never generates founder follow-up questions. Missing decision-critical evidence results in PASS. Pre-IPO status does not establish safety.
 
-Create a `.env` file with:
+## Start locally
+
+```bash
+source venv/bin/activate
+pip install -r requirements.txt
+LOCAL_MODE=1 streamlit run run.py --server.address 127.0.0.1
+```
+
+Open http://localhost:8501. Local mode skips authentication and stores private analysis records under `investment_memos/runs/`, even when Supabase credentials exist. Keep the local server bound to loopback. You may alternatively set `LOCAL_MODE=1` in your local `.env`.
+
+Configure `.env` or Streamlit secrets:
 
 ```env
 ANTHROPIC_API_KEY=...
 TAVILY_API_KEY=...
-SUPABASE_URL=...
-SUPABASE_ANON_KEY=...
 ```
 
-Then run:
+`ANALYSIS_MODEL` optionally overrides the default `claude-sonnet-4-5-20250929`. An Anthropic key is needed to analyze. Without Tavily, the research gap is explicit and the final decision cannot be INVEST. Never commit credentials or source documents.
 
-```bash
-source venv/bin/activate
-streamlit run run.py
-```
+## Workflow
 
-## Deploy on Streamlit Community Cloud
+1. Enter the company, available terms, and optionally its public website, stage and business model.
+2. Upload any available PDFs, CSV/TSV, XLSX or text files. AngelList is optional. Limits: 15 MB per file and 25 MB total.
+3. Review optional scenario assumptions: retained ownership, holding period, fees/carry, request limit and investment thesis.
+4. Run analysis. The default result is a short verdict, qualifying basis, reasons, return case, main risk and evidence confidence.
 
-1. Push this project to a GitHub repository.
-2. In Streamlit Community Cloud, create a new app from that repo.
-3. Set the main file path to `run.py`.
-4. Add these secrets in the Streamlit app settings:
+Evidence, cited sources, original documents, path assessments, calculation inputs, price/dilution sensitivities and the complete analysis record are available in expanders. Scenario controls do not rewrite the saved recommendation. No transactions are executed.
+
+## Analysis architecture
+
+- `analyzer/ingestion.py`: complete page-aware extraction, PDF tables, OCR fallback, spreadsheet formula-cache warnings, text splitting without silent truncation.
+- `analyzer/models.py`: validated evidence, economics and recommendation schemas.
+- `analyzer/pipeline.py`: real Tavily research and checkpointed specialist stages for evidence extraction, financial analysis, verification, upside, downside and decision writing. Uses the Anthropic SDK directly; CrewAI is no longer required.
+- `analyzer/finance.py`: deterministic ownership, dilution, fees/carry, reverse 100× and exit-scenario calculations; explicit decision gates.
+- `analyzer/storage.py`: versioned private records, original documents, evidence, input/thesis/model versions and intermediate checkpoints.
+- `analyzer/ui.py`: input, concise verdict, private history, actual phase progress, cancellation/resume and sensitivity controls.
+- `run.py`: entry point, authentication and legacy memo compatibility.
+
+Research queries contain only the public company name and website. Uploaded content is sent to the configured model for analysis, not included in external search queries. Source quotations are checked against retrieved text. Company identity, conflicting metrics and material gaps receive a separate verification pass. Citations establish provenance, not an independent guarantee that reported claims are true.
+
+## Calculation scope
+
+Supported structures are simple equity without material preference/debt-waterfall complications and post-money SAFEs where cap conversion ownership is established. Unknown terms, pre-money SAFEs, notes and complex preference stacks are explicitly unsupported and cannot yield INVEST.
+
+Scenario fees are fractions of total initial outlay. Carry is charged on positive profit above that outlay. The calculator models one initial investment and one exit; the annualized result is not an IRR for multiple dated cash flows. Exit values are equity values, not enterprise values.
+
+The 100× path requires a credible analyst assessment and a modeled upside of at least 100× net. The downside path requires a supported qualitative assessment, modeled downside of at least 1× and base above 1×. These are screening conditions, not a guarantee or personalized return/risk thresholds. Missing critical inputs, unresolved material conflicts, unconfirmed identity and low evidence confidence block INVEST.
+
+## Resume, budgets and extraction limits
+
+Completed steps are saved and reused on retry. After an app restart, open the company from history and select Resume. Cancellation takes effect between bounded provider requests. A model-request budget defaults to 80 and can be increased if reached. Input/output token usage is recorded; dollar cost is unavailable until pricing is configured externally. Source length determines runtime and usage; evidence extraction processes up to four segments per model call.
+
+Each run is an immutable research/input snapshot for analytical purposes. Start a new analysis to refresh public research or change original inputs. Interrupted runs retain their original inputs and retrieved evidence. Very large collected evidence is stopped with an explicit context-limit error rather than silently truncated.
+
+PDF text/table extraction cannot reliably interpret every chart. Scanned pages attempt OCR using the locally available Tesseract support; unavailable OCR, images/charts and unreadable content are disclosed as coverage gaps and assessed for materiality. XLSX formulas need cached values from a spreadsheet application. The app does not evaluate spreadsheet formulas or macros.
+
+## Private cloud deployment
+
+Leave `LOCAL_MODE` unset. Configure these additional Streamlit secrets:
 
 ```toml
-ANTHROPIC_API_KEY = "your_key_here"
-TAVILY_API_KEY = "your_key_here"
 SUPABASE_URL = "https://your-project-ref.supabase.co"
-SUPABASE_ANON_KEY = "your_supabase_anon_key"
+SUPABASE_ANON_KEY = "your_anon_key"
 ```
 
-5. Deploy.
+Enable Supabase email authentication and run `supabase_schema.sql` for a new database. Cloud mode requires valid configuration and sign-in. The existing owner-based row-level-security policies cover the new records; no migration is necessary if the original schema already exists.
 
-The app reads secrets from either environment variables or Streamlit secrets, so the same code works locally and in Streamlit Cloud.
+New analyses are serialized as versioned JSON inside `memos.memo_content`, including base64 original documents. This keeps checkpoint writes and document privacy under the existing RLS policy. It is deliberately a small-app storage approach: larger deployments should move document blobs to private object storage and normalize record metadata. Legacy Markdown memos remain readable and are labeled as lacking saved evidence.
 
-## Supabase setup
+## Verification
 
-This app now supports private per-user memo history when Supabase is configured.
+```bash
+venv/bin/python -m unittest discover -s tests -v
+```
 
-1. Create a Supabase project.
-2. In Supabase Auth, enable Email auth.
-3. Run the SQL in [`supabase_schema.sql`](/Users/macallan/PycharmProjects/playground/investment-analyzer/supabase_schema.sql) in the SQL editor.
-4. Copy your project URL and anon key into local `.env` or Streamlit secrets.
-5. Deploy or restart the app.
-
-With Supabase enabled:
-
-- users must sign in before using the app
-- each user only sees their own memos
-- memo history persists across restarts and redeploys
-
-Without Supabase configured, the app falls back to local file storage.
-
-## Current cloud limitation
-
-Uploaded source PDFs are still transient and are not stored in cloud storage yet. Only the final memo content is persisted to Supabase.
-
-If you want reliable cloud document retention too, the next step is to add object storage for uploaded files.
-
-## Main dependencies
-
-- `streamlit`
-- `crewai`
-- `anthropic`
-- `tavily-python`
-- `supabase`
-- `PyMuPDF`
-- `python-dotenv`
+Tests cover return arithmetic, unsupported inputs, conservative verdict gates, long-document coverage, spreadsheet warnings, fabricated quotations, checkpoint recovery/cancellation, private record handling, legacy compatibility, local authentication bypass and the Streamlit result screen. Provider integration checks can use synthetic material; do not use confidential company files merely to test a connection.
