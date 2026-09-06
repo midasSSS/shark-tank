@@ -299,6 +299,7 @@ def main(app):
                 if current.get("errors"):
                     st.warning(current.get("failure_message", "The last request failed."))
                     st.caption(f"Stopped while: {current['errors'][-1]['phase']}")
+                    st.caption(f"Error code: {current['errors'][-1]['type']}")
                 if current.get("failure_message") and current["errors"][-1]["type"] == "RequestBudgetExceeded":
                     limit = st.number_input("New total model-request limit", min_value=current.get("request_count", 0) + 1,
                                             value=current.get("request_count", 0) + 20, step=10)

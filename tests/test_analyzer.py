@@ -209,6 +209,22 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(pipe.ask("Test provider retry", {}, Evidence)["facts"], [])
         self.assertEqual(attempts, 2)
 
+    def test_evidence_batch_failure_yields_a_conservative_result(self):
+        pipe = self.pipeline()
+        working = pipe.extract_batch
+        calls = 0
+        def fail_first_batch(batch):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("temporary provider failure")
+            return working(batch)
+        pipe.extract_batch = fail_first_batch
+        pipe.execute()
+        self.assertEqual(pipe.state["status"], "complete")
+        self.assertEqual(pipe.state["result"]["verdict"], "PASS")
+        self.assertTrue(any("Evidence extraction failed" in gap for gap in pipe.state["steps"]["evidence"]["coverage_gaps"]))
+
     def test_summary_length_and_markdown_injection(self):
         decision = {"reasons": ["word " * 200 + "![tracking](https://example.com)"], "main_risk": "risk " * 60,
                     "confidence": "medium", "confidence_reason": "detail " * 50}

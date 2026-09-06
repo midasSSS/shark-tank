@@ -199,12 +199,24 @@ class Pipeline:
                     "Public research was limited to the first 12 usable source segments to keep analysis reliable."
                 ])
             sources = docs["sources"] + web["sources"]
+            if len(sources) > 12:
+                sources = sources[:12]
+                docs = dict(docs, gaps=docs["gaps"] + [
+                    "Evidence processing was limited to the first 12 source segments to keep analysis reliable."
+                ])
             facts, gaps, conflicts, errors = [], docs["gaps"] + web["gaps"], [], []
             for offset in range(0, len(sources), 2):
                 batch = sources[offset:offset + 2]
                 batch_id = digest("|".join(s["id"] for s in batch).encode())[:16]
-                result = self.step(f"extract:{batch_id}", f"Evidence agent: sources {offset + 1}–{min(offset + 2, len(sources))} of {len(sources)}",
-                                   lambda batch=batch: self.extract_batch(batch))
+                label = f"Evidence agent: sources {offset + 1}–{min(offset + 2, len(sources))} of {len(sources)}"
+                try:
+                    result = self.step(f"extract:{batch_id}", label, lambda batch=batch: self.extract_batch(batch))
+                except (Cancelled, RequestBudgetExceeded, EvidenceContextTooLarge):
+                    raise
+                except Exception:
+                    gaps.append(f"Evidence extraction failed for sources {offset + 1}–{min(offset + 2, len(sources))}; those sources were not used.")
+                    errors.append(f"Evidence extraction could not be completed for sources {offset + 1}–{min(offset + 2, len(sources))}.")
+                    continue
                 facts.extend(result["facts"])
                 gaps.extend(result["gaps"])
                 conflicts.extend(result["conflicts"])
