@@ -199,6 +199,10 @@ def main(app):
     owner = user["id"] if user else "local"
     repo = Repository(app.get_supabase_client() if user else None, owner if user else None)
     manager = jobs()
+    if notice := st.session_state.pop("history_notice", None):
+        st.success(notice)
+    if notice := st.session_state.pop("submission_notice", None):
+        st.info(notice)
     with st.sidebar:
         wordmark()
         if st.button("New analysis", key="new-analysis", icon=":material/add:", width="stretch"):
@@ -220,8 +224,6 @@ def main(app):
                         st.session_state.active_run = record["id"]
                         st.session_state.pop("legacy_memo", None)
                     st.rerun()
-            if notice := st.session_state.pop("history_notice", None):
-                st.success(notice)
         except Exception:
             st.error("Could not load private history. Check your storage connection.")
         if user and st.button("Sign out", key="sign-out", icon=":material/logout:", width="stretch"):
@@ -245,8 +247,6 @@ def main(app):
 
     if st.session_state.get("active_run"):
         identifier = st.session_state.active_run
-        if notice := st.session_state.pop("submission_notice", None):
-            st.info(notice)
         try:
             state = repo.load(identifier)
         except Exception:
