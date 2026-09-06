@@ -79,7 +79,7 @@ def analysis_header(record, repo, manager, owner, title=None, date=None, pdf_mar
         else:
             st.session_state.history_notice = f"Marked {title} as {selected}."
             st.rerun()
-    date_column, action_column = st.columns([5, 1.35], vertical_alignment="center")
+    date_column, action_column = st.columns([4, 2], vertical_alignment="center")
     with date_column:
         if date:
             st.caption(f"Analyzed {date}")
