@@ -247,6 +247,26 @@ def main(app):
         identifier = st.session_state.active_run
         if notice := st.session_state.pop("submission_notice", None):
             st.info(notice)
+        try:
+            state = repo.load(identifier)
+        except Exception:
+            st.error("Could not read the saved analysis. Check your private storage connection and refresh.")
+            return
+        if state is None:
+            memo = app.load_memo(identifier)
+            if memo:
+                fallback_date = str(memo.get("created_at", ""))[:10]
+                _, date, body = legacy_parts(memo["memo_content"], memo["company_name"], fallback_date)
+                title = memo["company_name"]
+                analysis_header(memo, repo, manager, owner, title, date, body)
+                st.markdown(app.format_memo_for_display(body))
+            return
+        if state["status"] == "complete":
+            analysis_header(state, repo, manager, owner, pdf_markdown=state["result"]["summary"])
+            show_result(state)
+            return
+
+        analysis_header(state, repo, manager, owner)
         polling = manager.active((owner, identifier))
 
         @st.fragment(run_every="2s" if polling else None)
@@ -254,47 +274,36 @@ def main(app):
             if polling and not manager.active((owner, identifier)):
                 st.rerun()
             try:
-                state = repo.load(identifier)
+                current = repo.load(identifier)
             except Exception:
-                st.error("Could not read the saved analysis. Check your private storage connection and refresh.")
+                st.error("Could not update analysis progress. Refresh to try again.")
                 return
-            if state is None:
-                memo = app.load_memo(identifier)
-                if memo:
-                    fallback_date = str(memo.get("created_at", ""))[:10]
-                    _, date, body = legacy_parts(memo["memo_content"], memo["company_name"], fallback_date)
-                    title = memo["company_name"]
-                    analysis_header(memo, repo, manager, owner, title, date, body)
-                    st.markdown(app.format_memo_for_display(body))
+            if current is None:
+                st.error("This analysis could not be found. Refresh to update your history.")
                 return
-            if state["status"] == "complete":
-                analysis_header(state, repo, manager, owner, pdf_markdown=state["result"]["summary"])
-                show_result(state)
-                return
-            analysis_header(state, repo, manager, owner)
-            if state["status"] == "queued" and manager.active((owner, identifier)):
+            if current["status"] == "queued" and manager.active((owner, identifier)):
                 st.info("Queued — your files are saved. Analysis will start automatically when your current analysis finishes.")
                 st.caption("You can browse your history while you wait. You don't need to upload these files again.")
             elif manager.active((owner, identifier)):
-                st.info(f"Analysis in progress · {state['phase']}")
+                st.info(f"Analysis in progress · {current['phase']}")
                 st.caption("Your submission is saved. This page updates automatically; no need to submit again.")
             else:
-                st.info("Analysis paused — select Resume analysis to continue." if state["status"] in {"queued", "running"} else state["phase"])
-            st.caption(f"{len(state['steps'])} saved steps · {state['status']}")
+                st.info("Analysis paused — select Resume analysis to continue." if current["status"] in {"queued", "running"} else current["phase"])
+            st.caption(f"{len(current['steps'])} saved steps · {current['status']}")
             if manager.active((owner, identifier)):
                 if st.button("Cancel analysis"):
                     manager.stop((owner, identifier))
                     st.info("Cancellation requested; the current provider request may take up to its timeout.")
             else:
                 st.caption("Completed steps will be reused. After an app restart, resume here.")
-                if state.get("errors"):
-                    st.warning(state.get("failure_message", "The last request failed."))
-                if state.get("failure_message") and state["errors"][-1]["type"] == "RequestBudgetExceeded":
-                    limit = st.number_input("New total model-request limit", min_value=state.get("request_count", 0) + 1,
-                                            value=state.get("request_count", 0) + 20, step=10)
-                    state["inputs"]["max_requests"] = limit
+                if current.get("errors"):
+                    st.warning(current.get("failure_message", "The last request failed."))
+                if current.get("failure_message") and current["errors"][-1]["type"] == "RequestBudgetExceeded":
+                    limit = st.number_input("New total model-request limit", min_value=current.get("request_count", 0) + 1,
+                                            value=current.get("request_count", 0) + 20, step=10)
+                    current["inputs"]["max_requests"] = limit
                 if st.button("Resume analysis", disabled=not app.ANTHROPIC_API_KEY):
-                    manager.start((owner, identifier), Pipeline(repo, state, app.ANTHROPIC_API_KEY, app.TAVILY_API_KEY))
+                    manager.start((owner, identifier), Pipeline(repo, current, app.ANTHROPIC_API_KEY, app.TAVILY_API_KEY))
                     st.rerun()
         live()
         return
