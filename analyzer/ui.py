@@ -64,22 +64,21 @@ def analysis_header(record, repo, manager, owner, title=None, date=None, pdf_mar
     date = date or str(record.get("created_at", ""))[:10]
     with st.container(key="memo-title"):
         st.header(title)
-    if record.get("format"):
-        action = record.get("investment_action", "undecided")
-        with st.container(key="memo-decision"):
-            selected = st.segmented_control(
-                "My decision", ["undecided", "buy", "pass"], default=action,
-                format_func=lambda value: {"undecided": "Undecided", "buy": "Buy", "pass": "Pass"}[value],
-                key="investment-action-" + record["id"], width="content"
-            )
-        if selected and selected != action:
-            try:
-                repo.set_investment_action(record["id"], selected)
-            except Exception:
-                st.error("Could not save your investment decision. Please try again.")
-            else:
-                st.session_state.history_notice = f"Marked {title} as {selected}."
-                st.rerun()
+    action = record.get("investment_action", "undecided")
+    with st.container(key="memo-decision"):
+        selected = st.segmented_control(
+            "My decision", ["undecided", "buy", "pass"], default=action,
+            format_func=lambda value: {"undecided": "Undecided", "buy": "Buy", "pass": "Pass"}[value],
+            key="investment-action-" + record["id"], width="content"
+        )
+    if selected and selected != action:
+        try:
+            repo.set_investment_action(record["id"], selected, legacy="format" not in record)
+        except Exception:
+            st.error("Could not save your investment decision. Please try again.")
+        else:
+            st.session_state.history_notice = f"Marked {title} as {selected}."
+            st.rerun()
     date_column, action_column = st.columns([5, 1.35], vertical_alignment="center")
     with date_column:
         if date:
@@ -230,6 +229,9 @@ def main(app):
             records = repo.list()
             if not user:
                 records += app.list_saved_memos()
+                for record in records:
+                    if record.get("storage") == "local":
+                        record["investment_action"] = repo.legacy_investment_action(record["id"])
             for record in records:
                 label = record["company_name"]
                 history_column, decision_column = st.columns([3.3, 1], vertical_alignment="center")
@@ -259,6 +261,7 @@ def main(app):
     if st.session_state.get("legacy_memo"):
         memo = app.load_memo(st.session_state.legacy_memo)
         if memo:
+            memo["investment_action"] = repo.legacy_investment_action(memo["id"])
             fallback_date = str(memo.get("created_at", ""))[:10]
             _, date, body = legacy_parts(memo["memo_content"], memo["company_name"], fallback_date)
             title = memo["company_name"]
@@ -273,10 +276,11 @@ def main(app):
         except Exception:
             st.error("Could not read the saved analysis. Check your private storage connection and refresh.")
             return
-        if state is None:
-            memo = app.load_memo(identifier)
-            if memo:
-                fallback_date = str(memo.get("created_at", ""))[:10]
+            if state is None:
+                memo = app.load_memo(identifier)
+                if memo:
+                    memo["investment_action"] = repo.legacy_investment_action(memo["id"])
+                    fallback_date = str(memo.get("created_at", ""))[:10]
                 _, date, body = legacy_parts(memo["memo_content"], memo["company_name"], fallback_date)
                 title = memo["company_name"]
                 analysis_header(memo, repo, manager, owner, title, date, body)

@@ -59,6 +59,17 @@ class DeletionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 repo.set_investment_action(record["id"], "invest")
 
+    def test_legacy_manual_investment_action_is_saved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            history = Path(directory) / "history"
+            history.mkdir()
+            memo = history / "Example_20260906_120000.md"
+            memo.write_text("legacy memo")
+            repo = Repository(root=history / "runs")
+            self.assertEqual(repo.legacy_investment_action(str(memo)), "undecided")
+            repo.set_investment_action(str(memo), "pass", legacy=True)
+            self.assertEqual(repo.legacy_investment_action(str(memo)), "pass")
+
     def test_only_selected_local_record_removed(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Repository(root=Path(directory) / "runs")

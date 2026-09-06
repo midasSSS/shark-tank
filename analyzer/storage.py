@@ -135,9 +135,33 @@ class Repository:
         path.rename(target)
         return str(target)
 
-    def set_investment_action(self, identifier: str, action: str) -> None:
+    def _legacy_actions(self) -> tuple[Path, dict]:
+        path = self.root.parent / ".investment-actions.json"
+        try:
+            values = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        except (ValueError, OSError):
+            values = {}
+        return path, values if isinstance(values, dict) else {}
+
+    def legacy_investment_action(self, identifier: str) -> str:
+        _, actions = self._legacy_actions()
+        return actions.get(identifier, "undecided")
+
+    def set_investment_action(self, identifier: str, action: str, legacy: bool = False) -> None:
         if action not in {"undecided", "buy", "pass"}:
             raise ValueError("Unknown investment action.")
+        if legacy:
+            if self.client:
+                raise ValueError("Legacy cloud memos cannot store a manual decision yet.")
+            path, actions = self._legacy_actions()
+            actions[identifier] = action
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            temporary = path.with_suffix(".tmp")
+            with open(temporary, "w", encoding="utf-8") as file:
+                os.chmod(temporary, 0o600)
+                json.dump(actions, file)
+            temporary.replace(path)
+            return
         state = self.load(identifier)
         if state is None:
             raise ValueError("Analysis was not found.")
