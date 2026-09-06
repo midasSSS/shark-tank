@@ -185,6 +185,14 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaises(RequestBudgetExceeded):
             pipe.ask("Test budget", {}, Evidence)
 
+    def test_model_json_wrapper_is_recovered(self):
+        client = SimpleNamespace(messages=SimpleNamespace(create=lambda **kwargs: SimpleNamespace(
+            content=[SimpleNamespace(type="text", text='Here is the result: {"facts": [], "gaps": [], "conflicts": []}')],
+            stop_reason="end_turn", usage=SimpleNamespace(input_tokens=10, output_tokens=5))))
+        pipe = Pipeline(self.repo, self.state, "fake", None, client=client)
+        self.assertEqual(pipe.ask("Test wrapped schema", {}, Evidence)["facts"], [])
+        self.assertEqual(self.state["request_count"], 1)
+
     def test_summary_length_and_markdown_injection(self):
         decision = {"reasons": ["word " * 200 + "![tracking](https://example.com)"], "main_risk": "risk " * 60,
                     "confidence": "medium", "confidence_reason": "detail " * 50}

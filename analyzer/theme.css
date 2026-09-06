@@ -18,9 +18,10 @@ h3 { font-size: 1.1rem !important; font-weight: 500 !important; letter-spacing: 
 button { transition: background .15s ease, border-color .15s ease; }
 [data-testid="stBaseButton-secondary"], [data-testid="stBaseButton-secondaryFormSubmit"] { background: #141414; border: 1px solid #303030; color: #ddd; font-size: .82rem; border-radius: 7px; }
 [data-testid="stBaseButton-secondary"]:hover { background: #222; border-color: #555; color: #fff; }
-[data-testid="stBaseButton-primary"], [data-testid="stBaseButton-primaryFormSubmit"] { background: linear-gradient(#fff, #dedede); color: #101010; border: 1px solid #fff; border-radius: 7px; min-height: 42px; box-shadow: 0 1px 1px #fff3 inset, 0 2px 8px #0004; }
+[data-testid="stBaseButton-primary"], [data-testid="stBaseButton-primaryFormSubmit"] { background-color: #f2f2f2 !important; color: #101010; border: 1px solid #f2f2f2; border-radius: 7px; min-height: 42px; box-shadow: 0 1px 1px #fff3 inset, 0 2px 8px #0004; transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease !important; }
 [data-testid="stBaseButton-primary"] p, [data-testid="stBaseButton-primaryFormSubmit"] p { font-size: .84rem; font-weight: 600; }
-[data-testid="stBaseButton-primary"]:hover, [data-testid="stBaseButton-primaryFormSubmit"]:hover { background: #fff; border-color: #fff; color: #000; }
+[data-testid="stBaseButton-primary"]:hover, [data-testid="stBaseButton-primaryFormSubmit"]:hover, [data-testid="stBaseButton-primary"]:focus-visible, [data-testid="stBaseButton-primaryFormSubmit"]:focus-visible { background-color: #fff !important; border-color: #fff !important; color: #101010; box-shadow: 0 1px 1px #fff3 inset, 0 3px 10px #0005; }
+[data-testid="stBaseButton-primary"]:active, [data-testid="stBaseButton-primaryFormSubmit"]:active { background-color: #e9e9e9 !important; border-color: #e9e9e9 !important; }
 button:focus-visible, summary:focus-visible { outline: 2px solid #aaa !important; outline-offset: 3px; }
 [data-testid="stForm"] { border: 1px solid var(--line); background: #0c0c0c; border-radius: 12px; padding: 25px; }
 [data-testid="stForm"] [data-testid="stVerticalBlock"] { gap: .85rem; }

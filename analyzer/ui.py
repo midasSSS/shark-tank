@@ -298,6 +298,7 @@ def main(app):
                 st.caption("Completed steps will be reused. After an app restart, resume here.")
                 if current.get("errors"):
                     st.warning(current.get("failure_message", "The last request failed."))
+                    st.caption(f"Stopped while: {current['errors'][-1]['phase']}")
                 if current.get("failure_message") and current["errors"][-1]["type"] == "RequestBudgetExceeded":
                     limit = st.number_input("New total model-request limit", min_value=current.get("request_count", 0) + 1,
                                             value=current.get("request_count", 0) + 20, step=10)

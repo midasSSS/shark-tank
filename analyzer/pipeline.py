@@ -67,15 +67,18 @@ class Pipeline:
         if len(prompt) > 450000:
             raise EvidenceContextTooLarge("Evidence exceeds the safe context limit; no content was silently removed.")
         last_error = None
-        for attempt in range(2):
+        for attempt in range(3):
             self.check()
             if self.state.get("request_count", 0) >= self.state["inputs"].get("max_requests", 80):
                 raise RequestBudgetExceeded()
             self.state["request_count"] = self.state.get("request_count", 0) + 1
             self.repo.save(self.state)
-            response = self.client.messages.create(model=self.state["model"], max_tokens=6000,
+            response = self.client.messages.create(model=self.state["model"], max_tokens=8000,
                 temperature=0, system=SYSTEM,
-                messages=[{"role": "user", "content": prompt + ("\nPrevious output failed validation. Return complete valid JSON matching the schema." if attempt else "")}])
+                messages=[{"role": "user", "content": prompt + (
+                    "\nPrevious output failed validation. Return only one complete JSON object matching the schema; do not add prose or Markdown."
+                    if attempt else ""
+                )}])
             usage = response.usage
             self.state["usage"].append({"role": role[:100], "input_tokens": usage.input_tokens,
                                         "output_tokens": usage.output_tokens, "at": now()})
@@ -85,7 +88,14 @@ class Pipeline:
             try:
                 if response.stop_reason == "max_tokens":
                     raise ValueError("Model output was truncated.")
-                return schema.model_validate_json(raw).model_dump()
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError:
+                    start = raw.find("{")
+                    if start < 0:
+                        raise
+                    parsed, _ = json.JSONDecoder().raw_decode(raw[start:])
+                return schema.model_validate(parsed).model_dump()
             except ValueError as error:
                 last_error = error
         raise ValueError("Analyst output failed schema validation after retry.") from last_error
@@ -153,7 +163,7 @@ class Pipeline:
 
     def extract_batch(self, batch):
         result = self.ask(
-            "Extract decision-relevant facts from EVERY supplied source with exact quotations and source IDs. Preserve metric periods, currencies, units and definitions. Do not infer missing numbers. Keep gaps specific to the provided material; do not infer company-wide gaps from partial pages. Ignore unrelated companies. Assess all segments, including the last.",
+            "Extract decision-relevant facts from EVERY supplied source with exact quotations and source IDs. Return at most four material facts per source. Preserve metric periods, currencies, units and definitions. Do not infer missing numbers. Keep gaps specific to the provided material; do not infer company-wide gaps from partial pages. Ignore unrelated companies. Assess all segments, including the last.",
             {"company": self.state["inputs"]["company_name"], "website": self.state["inputs"].get("website"), "sources": batch}, Evidence)
         identifiers = {source["id"] for source in batch}
         facts, errors = [], []
