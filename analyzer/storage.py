@@ -4,6 +4,7 @@ import hashlib
 import os
 import re
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -47,6 +48,20 @@ class Repository:
             self.save(state)
         return state
 
+    @staticmethod
+    def _is_transient_cloud_error(error: Exception) -> bool:
+        return type(error).__name__ in {"RemoteProtocolError", "ConnectError", "ReadError", "ReadTimeout", "WriteError"}
+
+    def _cloud_execute(self, operation):
+        """Retry safe cloud reads and updates when an HTTP connection is interrupted."""
+        for attempt in range(3):
+            try:
+                return operation()
+            except Exception as error:
+                if not self._is_transient_cloud_error(error) or attempt == 2:
+                    raise
+                time.sleep(0.5 * (attempt + 1))
+
     def find_duplicate(self, documents):
         fingerprint = document_fingerprint(documents)
         if not fingerprint:
@@ -73,9 +88,9 @@ class Repository:
             state["updated_at"] = now()
             payload = json.dumps(state, ensure_ascii=False, allow_nan=False)
             if self.client:
-                self.client.table("memos").update({
+                self._cloud_execute(lambda: self.client.table("memos").update({
                     "company_name": state["company_name"], "memo_content": payload
-                }).eq("id", state["id"]).eq("owner_id", self.owner).execute()
+                }).eq("id", state["id"]).eq("owner_id", self.owner).execute())
             else:
                 self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
                 target = self.root / f"{state['id']}.json"
@@ -121,7 +136,9 @@ class Repository:
 
     def load(self, identifier: str) -> dict | None:
         if self.client:
-            rows = self.client.table("memos").select("memo_content").eq("id", identifier).eq("owner_id", self.owner).limit(1).execute().data
+            rows = self._cloud_execute(lambda: self.client.table("memos").select("memo_content").eq(
+                "id", identifier
+            ).eq("owner_id", self.owner).limit(1).execute()).data
             return self.decode(rows[0]["memo_content"]) if rows else None
         # Identifiers are UUIDs, never paths supplied by the UI.
         from uuid import UUID

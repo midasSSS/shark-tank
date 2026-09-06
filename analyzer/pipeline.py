@@ -290,6 +290,7 @@ class Pipeline:
                 "EvidenceContextTooLarge": "The collected evidence exceeds the model context limit. No evidence was silently discarded; this run cannot produce a reliable verdict.",
                 "APITimeoutError": "The model request timed out. Retry to resume saved steps.",
                 "ProviderRequestFailed": "The model provider could not complete a request after retries. Resume to continue from the saved step.",
+                "RemoteProtocolError": "The saved-analysis connection was interrupted. Resume to continue from the last checkpoint.",
                 "ValueError": "An input or model response failed validation. Check file formats and retry.",
             }.get(type(exc).__name__, "A processing or provider request failed. Completed steps were retained.")
         finally:

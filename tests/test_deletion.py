@@ -1,13 +1,37 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from analyzer.storage import Repository
 
 
 class DeletionTests(unittest.TestCase):
+    def test_cloud_save_retries_interrupted_connection(self):
+        class RemoteProtocolError(Exception):
+            pass
+
+        class Query:
+            attempts = 0
+            def update(self, values):
+                return self
+            def eq(self, key, value):
+                return self
+            def execute(self):
+                self.attempts += 1
+                if self.attempts == 1:
+                    raise RemoteProtocolError()
+                return SimpleNamespace(data=[])
+
+        query = Query()
+        repo = Repository(client=SimpleNamespace(table=lambda table: query), owner="alice")
+        state = {"id": str(uuid4()), "company_name": "Example"}
+        with patch("analyzer.storage.time.sleep"):
+            repo.save(state)
+        self.assertEqual(query.attempts, 2)
+
     def test_rename_updates_current_and_legacy_local_records(self):
         with tempfile.TemporaryDirectory() as directory:
             history = Path(directory) / "history"
