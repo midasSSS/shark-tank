@@ -48,6 +48,17 @@ class DeletionTests(unittest.TestCase):
             self.assertEqual(Path(renamed).name, "New_Name_20260906_120000.md")
             self.assertTrue(Path(renamed).exists())
 
+    def test_manual_investment_action_is_saved_and_listed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Repository(root=Path(directory) / "runs")
+            record = repo.create({"company_name": "Example", "model": "test"}, [])
+            self.assertEqual(repo.list()[0]["investment_action"], "undecided")
+            repo.set_investment_action(record["id"], "buy")
+            self.assertEqual(repo.load(record["id"])["investment_action"], "buy")
+            self.assertEqual(repo.list()[0]["investment_action"], "buy")
+            with self.assertRaises(ValueError):
+                repo.set_investment_action(record["id"], "invest")
+
     def test_only_selected_local_record_removed(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Repository(root=Path(directory) / "runs")

@@ -45,6 +45,10 @@ button:focus-visible, summary:focus-visible { outline: 2px solid #aaa !important
 [data-testid="stSidebar"] [class*="st-key-history-"] button > div > span { width: 100%; justify-content: flex-start !important; text-align: left !important; margin-left: 0; padding-left: 0; }
 [data-testid="stSidebar"] [class*="st-key-history-"] [data-testid="stMarkdownContainer"] { width: 100%; text-align: left !important; }
 [data-testid="stSidebar"] [class*="st-key-history-"] p { text-align: left !important; }
+[data-testid="stSidebar"] [data-testid="stHorizontalBlock"]:has([class*="st-key-history-"]) { gap: .2rem; align-items: center; }
+.decision-badge { display: inline-flex; justify-content: center; min-width: 100%; box-sizing: border-box; border: 1px solid #383838; border-radius: 4px; padding: 3px 4px; color: #949494; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .51rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+.decision-buy { border-color: #3d7650; background: #112519; color: #94d6a5; }
+.decision-pass { border-color: #704444; background: #281515; color: #e0a0a0; }
 [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"]:hover { background: #1b1b1b; }
 [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"]:hover p { color: #eee; }
 [data-testid="stSidebar"] .st-key-new-analysis button { border: 1px solid #353535; background: #1a1a1a; justify-content: center; margin: 8px 0 12px; }

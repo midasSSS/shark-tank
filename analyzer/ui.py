@@ -64,10 +64,26 @@ def analysis_header(record, repo, manager, owner, title=None, date=None, pdf_mar
     date = date or str(record.get("created_at", ""))[:10]
     with st.container(key="memo-title"):
         st.header(title)
-    date_column, action_column = st.columns([5, 1.35], vertical_alignment="center")
+    date_column, decision_column, action_column = st.columns([3.35, 2.2, 1.35], vertical_alignment="center")
     with date_column:
         if date:
             st.caption(f"Analyzed {date}")
+    if record.get("format"):
+        action = record.get("investment_action", "undecided")
+        with decision_column:
+            selected = st.segmented_control(
+                "My decision", ["undecided", "buy", "pass"], default=action,
+                format_func=lambda value: {"undecided": "Undecided", "buy": "Buy", "pass": "Pass"}[value],
+                key="investment-action-" + record["id"], label_visibility="collapsed", width="stretch"
+            )
+        if selected and selected != action:
+            try:
+                repo.set_investment_action(record["id"], selected)
+            except Exception:
+                st.error("Could not save your investment decision. Please try again.")
+            else:
+                st.session_state.history_notice = f"Marked {title} as {selected}."
+                st.rerun()
     with action_column:
         with st.popover("Actions", icon=":material/more_horiz:", width="content", key="memo-actions"):
             if pdf_markdown is not None:
@@ -216,14 +232,19 @@ def main(app):
                 records += app.list_saved_memos()
             for record in records:
                 label = record["company_name"]
-                if st.button(label, key="history-" + record["id"], width="stretch"):
-                    if record.get("storage") == "local":
-                        st.session_state.legacy_memo = record["id"]
-                        st.session_state.pop("active_run", None)
-                    else:
-                        st.session_state.active_run = record["id"]
-                        st.session_state.pop("legacy_memo", None)
-                    st.rerun()
+                history_column, decision_column = st.columns([3.3, 1], vertical_alignment="center")
+                with history_column:
+                    if st.button(label, key="history-" + record["id"], width="stretch"):
+                        if record.get("storage") == "local":
+                            st.session_state.legacy_memo = record["id"]
+                            st.session_state.pop("active_run", None)
+                        else:
+                            st.session_state.active_run = record["id"]
+                            st.session_state.pop("legacy_memo", None)
+                        st.rerun()
+                with decision_column:
+                    action = record.get("investment_action", "undecided")
+                    st.html(f'<span class="decision-badge decision-{action}">{action}</span>')
         except Exception:
             st.error("Could not load private history. Check your storage connection.")
         if user and st.button("Sign out", key="sign-out", icon=":material/logout:", width="stretch"):

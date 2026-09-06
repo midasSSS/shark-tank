@@ -38,7 +38,8 @@ class Repository:
         state = {"format": MARKER, "id": str(uuid4()), "company_name": inputs["company_name"],
                  "created_at": now(), "updated_at": now(), "status": "queued", "phase": "Queued",
                  "inputs": inputs, "documents": documents, "steps": {}, "usage": [], "errors": [],
-                 "model": inputs["model"], "prompt_version": "2026-09-invest-pass-v1"}
+                 "model": inputs["model"], "prompt_version": "2026-09-invest-pass-v1",
+                 "investment_action": "undecided"}
         state["document_fingerprint"] = document_fingerprint(documents)
         if self.client:
             self.client.table("memos").insert({"id": state["id"], "owner_id": self.owner,
@@ -134,6 +135,15 @@ class Repository:
         path.rename(target)
         return str(target)
 
+    def set_investment_action(self, identifier: str, action: str) -> None:
+        if action not in {"undecided", "buy", "pass"}:
+            raise ValueError("Unknown investment action.")
+        state = self.load(identifier)
+        if state is None:
+            raise ValueError("Analysis was not found.")
+        state["investment_action"] = action
+        self.save(state)
+
     def load(self, identifier: str) -> dict | None:
         if self.client:
             rows = self._cloud_execute(lambda: self.client.table("memos").select("memo_content").eq(
@@ -176,16 +186,20 @@ class Repository:
 
     def list(self) -> list[dict]:
         if self.client:
-            # Only metadata; documents are loaded for the selected record.
-            rows = self.client.table("memos").select("id,company_name,created_at").eq("owner_id", self.owner).order("created_at", desc=True).limit(200).execute().data
-            return rows
+            rows = self._cloud_execute(lambda: self.client.table("memos").select(
+                "id,company_name,created_at,memo_content"
+            ).eq("owner_id", self.owner).order("created_at", desc=True).limit(200).execute()).data
+            return [{"id": row["id"], "company_name": row["company_name"], "created_at": row["created_at"],
+                     "investment_action": (self.decode(row.get("memo_content")) or {}).get("investment_action", "undecided")}
+                    for row in rows]
         if not self.root.exists():
             return []
         result = []
         for path in self.root.glob("*.json"):
             try:
                 state = json.loads(path.read_text())
-                result.append({key: state[key] for key in ("id", "company_name", "created_at", "status")})
+                result.append({key: state[key] for key in ("id", "company_name", "created_at", "status")}
+                              | {"investment_action": state.get("investment_action", "undecided")})
             except (ValueError, KeyError):
                 continue
         return sorted(result, key=lambda item: item["created_at"], reverse=True)
