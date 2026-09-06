@@ -234,19 +234,15 @@ def main(app):
                         record["investment_action"] = repo.legacy_investment_action(record["id"])
             for record in records:
                 label = record["company_name"]
-                history_column, decision_column = st.columns([3.3, 1], vertical_alignment="center")
-                with history_column:
-                    if st.button(label, key="history-" + record["id"], width="stretch"):
-                        if record.get("storage") == "local":
-                            st.session_state.legacy_memo = record["id"]
-                            st.session_state.pop("active_run", None)
-                        else:
-                            st.session_state.active_run = record["id"]
-                            st.session_state.pop("legacy_memo", None)
-                        st.rerun()
-                with decision_column:
-                    action = record.get("investment_action", "undecided")
-                    st.html(f'<span class="decision-badge decision-{action}">{action}</span>')
+                action = record.get("investment_action", "undecided")
+                if st.button(label, key=f"history-{action}-{record['id']}", width="stretch"):
+                    if record.get("storage") == "local":
+                        st.session_state.legacy_memo = record["id"]
+                        st.session_state.pop("active_run", None)
+                    else:
+                        st.session_state.active_run = record["id"]
+                        st.session_state.pop("legacy_memo", None)
+                    st.rerun()
         except Exception:
             st.error("Could not load private history. Check your storage connection.")
         if user and st.button("Sign out", key="sign-out", icon=":material/logout:", width="stretch"):
