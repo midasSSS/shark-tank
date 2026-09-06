@@ -71,7 +71,7 @@ def analysis_header(record, repo, manager, owner, title=None, date=None, pdf_mar
     action = record.get("investment_action", "undecided")
     with decision_column:
         selected = st.segmented_control(
-            "My decision", ["undecided", "buy", "pass"], default=action,
+            "My decision", ["pass", "undecided", "buy"], default=action,
             format_func=lambda value: {"undecided": "🤔", "buy": "✅", "pass": "❌"}[value],
             key="investment-action-" + record["id"], label_visibility="collapsed", width="content"
         )

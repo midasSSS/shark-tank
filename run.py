@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 import streamlit as st
+import extra_streamlit_components as stx
 from dotenv import load_dotenv
 import fitz  # PyMuPDF
 from supabase import Client, create_client
@@ -31,6 +32,7 @@ def get_secret(name: str) -> Optional[str]:
 # Verify API keys
 ANTHROPIC_API_KEY = get_secret("ANTHROPIC_API_KEY")
 TAVILY_API_KEY = get_secret("TAVILY_API_KEY")
+AUTH_COOKIE_NAME = "investment_analyzer_refresh"
 
 if not ANTHROPIC_API_KEY:
     st.error("⚠️ ANTHROPIC_API_KEY not found in .env file")
@@ -130,6 +132,41 @@ def get_supabase_client() -> Optional[Client]:
     return st.session_state.supabase_client
 
 
+def _auth_cookie_manager():
+    if "auth_cookie_manager" not in st.session_state:
+        st.session_state.auth_cookie_manager = stx.CookieManager(key="investment-analyzer-auth")
+    return st.session_state.auth_cookie_manager
+
+
+def _stored_refresh_token() -> Optional[str]:
+    try:
+        token = st.context.cookies.get(AUTH_COOKIE_NAME)
+        if token:
+            return token
+    except Exception:
+        pass
+    try:
+        return _auth_cookie_manager().get(AUTH_COOKIE_NAME)
+    except Exception:
+        return None
+
+
+def _persist_refresh_token(refresh_token: str) -> None:
+    _auth_cookie_manager().set(
+        AUTH_COOKIE_NAME, refresh_token, key="save-investment-analyzer-auth", max_age=60 * 60 * 24 * 30,
+        secure=os.getenv("LOCAL_MODE", "").strip().lower() not in {"1", "true", "yes"}, same_site="strict"
+    )
+
+
+def _clear_refresh_token() -> None:
+    try:
+        manager = _auth_cookie_manager()
+        if manager.get(AUTH_COOKIE_NAME):
+            manager.delete(AUTH_COOKIE_NAME, key="clear-investment-analyzer-auth")
+    except Exception:
+        pass
+
+
 def persist_auth_session(session: Any, user: Any) -> None:
     """Persist auth details into Streamlit session state."""
     st.session_state.auth_tokens = {
@@ -140,6 +177,7 @@ def persist_auth_session(session: Any, user: Any) -> None:
         "id": str(user.id),
         "email": user.email,
     }
+    _persist_refresh_token(session.refresh_token)
 
 
 def clear_auth_session() -> None:
@@ -149,13 +187,29 @@ def clear_auth_session() -> None:
     st.session_state.selected_memo_path = None
     st.session_state.memo_history_selection = None
     st.session_state.view_mode = "new"
+    _clear_refresh_token()
 
 
 def get_current_user() -> Optional[Dict[str, str]]:
     """Return the authenticated user when Supabase is enabled."""
     if not is_supabase_enabled():
         return None
-    return st.session_state.get("auth_user")
+    if user := st.session_state.get("auth_user"):
+        return user
+    refresh_token = _stored_refresh_token()
+    if not refresh_token:
+        return None
+    try:
+        response = get_supabase_client().auth.refresh_session(refresh_token)
+        if response.session and response.user:
+            persist_auth_session(response.session, response.user)
+            return st.session_state.auth_user
+    except Exception:
+        # Preserve the cookie through transient connection failures; a later
+        # refresh can restore the session without asking the user to sign in.
+        return None
+    _clear_refresh_token()
+    return None
 
 
 def sign_in_user(email: str, password: str) -> tuple[bool, str]:
