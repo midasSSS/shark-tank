@@ -19,28 +19,24 @@ def jobs():
     return Jobs()
 
 
-@st.dialog("Delete analysis")
 def delete_analysis(record, repo, manager, owner):
-    st.write(f"Delete the analysis for {record['company_name']}?")
-    st.caption("This permanently removes this analysis and its saved source files. Original files on your computer are not affected.")
-    if st.button("Delete permanently", type="primary"):
-        identifier = record["id"]
-        if manager.active((owner, identifier)):
-            st.error("Cancel the running analysis before deleting it.")
-            return
-        try:
-            if record.get("storage") == "local":
-                repo.delete_legacy(identifier)
-            else:
-                repo.delete(identifier)
-        except Exception:
-            st.error("Could not delete this analysis. Please try again.")
-            return
-        for key in ("active_run", "legacy_memo"):
-            if st.session_state.get(key) == identifier:
-                st.session_state.pop(key, None)
-        st.session_state.history_notice = "Analysis deleted."
-        st.rerun()
+    identifier = record["id"]
+    if manager.active((owner, identifier)):
+        st.error("Cancel the running analysis before deleting it.")
+        return
+    try:
+        if record.get("storage") == "local":
+            repo.delete_legacy(identifier)
+        else:
+            repo.delete(identifier)
+    except Exception:
+        st.error("Could not delete this analysis. Please try again.")
+        return
+    for key in ("active_run", "legacy_memo"):
+        if st.session_state.get(key) == identifier:
+            st.session_state.pop(key, None)
+    st.session_state.history_notice = "Analysis deleted."
+    st.rerun()
 
 
 def analysis_header(record, repo, manager, owner, title=None, date=None, pdf_markdown=None):
