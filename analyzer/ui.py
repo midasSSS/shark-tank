@@ -1,12 +1,15 @@
 import base64
 import json
 import os
+import re
+from pathlib import Path
 
 import streamlit as st
 
-from .design import apply_theme, breadcrumb, section, storage_badge, wordmark
+from .design import apply_theme, wordmark
 from .finance import calculate
 from .ingestion import MAX_FILE_BYTES, MAX_TOTAL_BYTES
+from .pdf_export import legacy_parts, memo_pdf
 from .pipeline import Jobs, Pipeline
 from .storage import Repository
 
@@ -14,6 +17,51 @@ from .storage import Repository
 @st.cache_resource
 def jobs():
     return Jobs()
+
+
+@st.dialog("Delete analysis")
+def delete_analysis(record, repo, manager, owner):
+    st.write(f"Delete the analysis for {record['company_name']}?")
+    st.caption("This permanently removes this analysis and its saved source files. Original files on your computer are not affected.")
+    if st.button("Delete permanently", type="primary"):
+        identifier = record["id"]
+        if manager.active((owner, identifier)):
+            st.error("Cancel the running analysis before deleting it.")
+            return
+        try:
+            if record.get("storage") == "local":
+                repo.delete_legacy(identifier)
+            else:
+                repo.delete(identifier)
+        except Exception:
+            st.error("Could not delete this analysis. Please try again.")
+            return
+        for key in ("active_run", "legacy_memo"):
+            if st.session_state.get(key) == identifier:
+                st.session_state.pop(key, None)
+        st.session_state.history_notice = "Analysis deleted."
+        st.rerun()
+
+
+def analysis_header(record, repo, manager, owner, title=None, date=None, pdf_markdown=None):
+    title = title or record["company_name"]
+    date = date or str(record.get("created_at", ""))[:10]
+    with st.container(key="memo-title"):
+        st.header(title)
+    date_column, action_column = st.columns([5, 1.35], vertical_alignment="center")
+    with date_column:
+        if date:
+            st.caption(f"Analyzed {date}")
+    with action_column:
+        with st.popover("Actions", icon=":material/more_horiz:", width="content", key="memo-actions"):
+            if pdf_markdown is not None:
+                pdf = memo_pdf(title, date, pdf_markdown)
+                filename = re.sub(r"[^A-Za-z0-9._-]+", "-", title).strip("-").lower() or "investment-memo"
+                st.download_button("Save as PDF", pdf, file_name=f"{filename}.pdf",
+                                   mime="application/pdf", icon=":material/picture_as_pdf:", width="stretch")
+            if st.button("Delete analysis", icon=":material/delete:", key="delete-analysis-" + record["id"],
+                         disabled=manager.active((owner, record["id"])), width="stretch"):
+                delete_analysis(record, repo, manager, owner)
 
 
 def auth(app):
@@ -95,9 +143,9 @@ def show_result(state):
 def main(app):
     st.set_page_config(page_title="Investment Analyzer", page_icon="↗", layout="wide")
     apply_theme()
-    breadcrumb(bool(st.session_state.get("active_run") or st.session_state.get("legacy_memo")))
-    st.title("Investment Analyzer")
-    st.html('<p class="page-intro">Find the exceptional. Understand the downside.<br>A clear investment decision, grounded in the evidence.</p>')
+    if not (st.session_state.get("active_run") or st.session_state.get("legacy_memo")):
+        st.title("Investment Analyzer")
+        st.html('<p class="page-intro">Find the exceptional. Understand the downside.<br>A clear investment decision, grounded in the evidence.</p>')
     if os.getenv("LOCAL_MODE", "").strip().lower() not in {"1", "true", "yes"} and not app.is_supabase_enabled():
         st.error("Configure Supabase for private cloud access, or start on loopback with LOCAL_MODE=1 for local use.")
         return
@@ -113,16 +161,13 @@ def main(app):
             st.session_state.pop("active_run", None)
             st.session_state.pop("legacy_memo", None)
             st.rerun()
-        query = st.text_input("Search companies", placeholder="Search companies…", label_visibility="collapsed", icon=":material/search:")
         st.html('<div class="workspace-label" style="padding-top:18px">ANALYSIS HISTORY</div>')
         try:
             records = repo.list()
             if not user:
                 records += app.list_saved_memos()
             for record in records:
-                if query.casefold() not in record["company_name"].casefold():
-                    continue
-                label = f"{record['company_name']} · {str(record.get('created_at', ''))[:10]}"
+                label = record["company_name"]
                 if st.button(label, key="history-" + record["id"], width="stretch"):
                     if record.get("storage") == "local":
                         st.session_state.legacy_memo = record["id"]
@@ -131,9 +176,10 @@ def main(app):
                         st.session_state.active_run = record["id"]
                         st.session_state.pop("legacy_memo", None)
                     st.rerun()
+            if notice := st.session_state.pop("history_notice", None):
+                st.success(notice)
         except Exception:
             st.error("Could not load private history. Check your storage connection.")
-        storage_badge(bool(user))
         if user and st.button("Sign out"):
             active = st.session_state.get("active_run")
             if active:
@@ -146,12 +192,16 @@ def main(app):
     if st.session_state.get("legacy_memo"):
         memo = app.load_memo(st.session_state.legacy_memo)
         if memo:
-            st.caption("Legacy memo — source evidence was not saved with this analysis.")
-            st.markdown(app.format_memo_for_display(memo["memo_content"]))
+            fallback_date = str(memo.get("created_at", ""))[:10]
+            title, date, body = legacy_parts(memo["memo_content"], memo["company_name"], fallback_date)
+            analysis_header(memo, repo, manager, owner, title, date, body)
+            st.markdown(app.format_memo_for_display(body))
         return
 
     if st.session_state.get("active_run"):
         identifier = st.session_state.active_run
+        if notice := st.session_state.pop("submission_notice", None):
+            st.info(notice)
         polling = manager.active((owner, identifier))
 
         @st.fragment(run_every="2s" if polling else None)
@@ -166,14 +216,24 @@ def main(app):
             if state is None:
                 memo = app.load_memo(identifier)
                 if memo:
-                    st.caption("Legacy memo — evidence unavailable")
-                    st.markdown(app.format_memo_for_display(memo["memo_content"]))
+                    fallback_date = str(memo.get("created_at", ""))[:10]
+                    title, date, body = legacy_parts(memo["memo_content"], memo["company_name"], fallback_date)
+                    analysis_header(memo, repo, manager, owner, title, date, body)
+                    st.markdown(app.format_memo_for_display(body))
                 return
-            st.subheader(state["company_name"])
             if state["status"] == "complete":
+                analysis_header(state, repo, manager, owner, pdf_markdown=state["result"]["summary"])
                 show_result(state)
                 return
-            st.info(state["phase"])
+            analysis_header(state, repo, manager, owner)
+            if state["status"] == "queued" and manager.active((owner, identifier)):
+                st.info("Queued — your files are saved. Analysis will start automatically when your current analysis finishes.")
+                st.caption("You can browse your history while you wait. You don't need to upload these files again.")
+            elif manager.active((owner, identifier)):
+                st.info(f"Analysis in progress · {state['phase']}")
+                st.caption("Your submission is saved. This page updates automatically; no need to submit again.")
+            else:
+                st.info("Analysis paused — select Resume analysis to continue." if state["status"] in {"queued", "running"} else state["phase"])
             st.caption(f"{len(state['steps'])} saved steps · {state['status']}")
             if manager.active((owner, identifier)):
                 if st.button("Cancel analysis"):
@@ -194,42 +254,15 @@ def main(app):
         return
 
     with st.form("decision_input"):
-        section("01", "The company", "Start with the opportunity you’re considering.")
-        left, right = st.columns(2)
-        with left:
-            name = st.text_input("Company name", placeholder="e.g. Acme", max_chars=150)
-        with right:
-            website = st.text_input("Website (optional)", placeholder="https://company.com", help="A public company website, used with the company name for research. Private documents are not sent as search queries.")
-        left, right = st.columns(2)
-        with left:
-            stage = st.selectbox("Stage", ["Infer from evidence", "Early stage", "Growth stage", "Pre-IPO"])
-        with right:
-            business = st.text_input("Business model (optional)", placeholder="SaaS, marketplace, hardware…")
-        description = st.text_area("Company context (optional)", placeholder="What does the company do? What stands out?", height=85)
-        st.divider()
-        section("02", "The opportunity", "The price and the evidence behind the pitch.")
-        terms = st.text_area("Offered price and deal terms", placeholder="Valuation, share class or SAFE terms, investment amount, fees and carry…", height=95)
-        files = st.file_uploader("Available company materials", type=["pdf", "csv", "tsv", "xlsx", "txt", "md"], accept_multiple_files=True, label_visibility="collapsed")
-        st.caption("Decks, financials, terms or notes · 15 MB per file, 25 MB total")
-        with st.expander("Scenario assumptions and investment thesis"):
-            st.caption("Illustrative assumptions, disclosed in your result. Documented terms take precedence.")
-            retained = st.slider("Ownership retained after future dilution", 0.05, 1.0, 0.5, 0.05)
-            years = st.number_input("Scenario holding period (years)", min_value=1.0, max_value=40.0, value=7.0)
-            fee = st.number_input("Assumed upfront fee (% of total outlay)", min_value=0.0, max_value=50.0, value=0.0)
-            carry = st.number_input("Assumed carry (% of profit)", min_value=0.0, max_value=50.0, value=0.0)
-            max_requests = st.number_input("Maximum model requests for this run", min_value=10, max_value=500, value=80, step=10)
-            thesis = st.text_area("Investment thesis", value=app.INVESTMENT_THESIS, height=180)
+        files = st.file_uploader("Company materials", type=["pdf", "csv", "tsv", "xlsx", "txt", "md"], accept_multiple_files=True)
+        st.caption("Upload files for one company. The first filename becomes the company name. 15 MB per file, 25 MB total.")
         submit = st.form_submit_button("Analyze investment", type="primary", width="stretch", icon=":material/arrow_forward:")
-        st.caption("A concise invest / pass decision. No founder follow-ups. Missing critical evidence means pass.")
     if submit:
-        if not name.strip():
-            st.error("Enter a company name.")
+        if not files:
+            st.error("Upload at least one file to analyze.")
             return
         if not app.ANTHROPIC_API_KEY:
             st.error("Configure ANTHROPIC_API_KEY to run analysis.")
-            return
-        if website and not website.startswith(("https://", "http://")):
-            st.error("Use a full public website URL beginning with https:// or http://.")
             return
         documents = [{"name": file.name, "data": base64.b64encode(file.getvalue()).decode()} for file in files]
         if any(file.size > MAX_FILE_BYTES for file in files):
@@ -239,16 +272,21 @@ def main(app):
             st.error("Upload at most 25 MB total per analysis.")
             return
         # Avoid collisions in document downloads and redundant extraction.
-        documents = list({(item["name"], item["data"]): item for item in documents}.values())
-        inputs = dict(company_name=name.strip(), website=website.strip(), stage=stage, business_model=business,
-                      description=description, terms=terms, thesis=thesis,
-                      model=os.getenv("ANALYSIS_MODEL", "claude-sonnet-4-5-20250929"), max_requests=max_requests,
-                      scenario_assumptions={"retained_fraction": retained, "holding_years": years,
-                                            "fee_fraction": fee / 100, "carry_fraction": carry / 100})
+        documents = list({item["data"]: item for item in documents}.values())
+        name = re.sub(r"[_\s]+", " ", Path(files[0].name).stem).strip() or "Untitled company"
+        inputs = dict(company_name=name, website="", stage="Infer from evidence", business_model="Infer from evidence",
+                      description="", terms="", thesis=app.INVESTMENT_THESIS,
+                      model=os.getenv("ANALYSIS_MODEL", "claude-sonnet-4-5-20250929"), max_requests=80,
+                      scenario_assumptions={"retained_fraction": 0.5, "holding_years": 7.0,
+                                            "fee_fraction": 0.0, "carry_fraction": 0.0})
         try:
-            state = repo.create(inputs, documents)
+            with st.spinner("Checking your files and saving the submission…"):
+                state, created = manager.submit(owner, repo, inputs, documents, app.ANTHROPIC_API_KEY, app.TAVILY_API_KEY)
             st.session_state.active_run = state["id"]
-            manager.start((owner, state["id"]), Pipeline(repo, state, app.ANTHROPIC_API_KEY, app.TAVILY_API_KEY))
+            st.session_state.submission_notice = (
+                "Files received. Your analysis has been submitted — no need to upload again."
+                if created else "These files already have an analysis. Opening the existing entry instead of creating a duplicate."
+            )
         except Exception:
             st.error("Could not start or save the analysis. Check the API and storage configuration.")
             return

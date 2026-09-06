@@ -277,7 +277,18 @@ class Pipeline:
 class Jobs:
     def __init__(self):
         self.items = {}
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
+        self.slots = {}
+
+    def submit(self, owner, repo, inputs, documents, anthropic_key, tavily_key):
+        # Serialize lookup + creation across sessions in this app process.
+        with self.lock:
+            existing = repo.find_duplicate(documents)
+            if existing:
+                return existing, False
+            state = repo.create(inputs, documents)
+            self.start((owner, state["id"]), Pipeline(repo, state, anthropic_key, tavily_key))
+            return state, True
 
     def active(self, key):
         with self.lock:
@@ -289,7 +300,22 @@ class Jobs:
             item = self.items.get(key)
             if item and item[0].is_alive():
                 return False
-            thread = threading.Thread(target=pipeline.execute, daemon=True)
+            slot = self.slots.setdefault(key[0], threading.Semaphore(1))
+            pipeline.state.update(status="queued", phase="Queued — waiting for an analysis slot")
+            pipeline.repo.save(pipeline.state)
+
+            def execute_when_ready():
+                while not pipeline.cancel.is_set():
+                    if slot.acquire(timeout=0.25):
+                        try:
+                            pipeline.execute()
+                        finally:
+                            slot.release()
+                        return
+                pipeline.state.update(status="cancelled", phase="Cancelled before analysis started")
+                pipeline.repo.save(pipeline.state)
+
+            thread = threading.Thread(target=execute_when_ready, daemon=True)
             self.items[key] = (thread, pipeline.cancel)
             thread.start()
             return True

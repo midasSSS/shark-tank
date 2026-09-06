@@ -25,10 +25,9 @@ TAVILY_API_KEY=...
 
 ## Workflow
 
-1. Enter the company, available terms, and optionally its public website, stage and business model.
-2. Upload any available PDFs, CSV/TSV, XLSX or text files. AngelList is optional. Limits: 15 MB per file and 25 MB total.
-3. Review optional scenario assumptions: retained ownership, holding period, fees/carry, request limit and investment thesis.
-4. Run analysis. The default result is a short verdict, qualifying basis, reasons, return case, main risk and evidence confidence.
+1. Upload available PDFs, CSV/TSV, XLSX or text files for one company. The first filename becomes the company name. Limits: 15 MB per file and 25 MB total.
+2. Select Analyze investment. Stage, business model and terms are assessed from the evidence. The existing default thesis and disclosed scenario assumptions are applied automatically.
+3. Read the result. The default result is a short verdict, qualifying basis, reasons, return case, main risk and evidence confidence.
 
 Evidence, cited sources, original documents, path assessments, calculation inputs, price/dilution sensitivities and the complete analysis record are available in expanders. Scenario controls do not rewrite the saved recommendation. No transactions are executed.
 
@@ -54,7 +53,7 @@ The 100× path requires a credible analyst assessment and a modeled upside of at
 
 ## Resume, budgets and extraction limits
 
-Completed steps are saved and reused on retry. After an app restart, open the company from history and select Resume. Cancellation takes effect between bounded provider requests. A model-request budget defaults to 80 and can be increased if reached. Input/output token usage is recorded; dollar cost is unavailable until pricing is configured externally. Source length determines runtime and usage; evidence extraction processes up to four segments per model call.
+Uploads are deduplicated by file contents, regardless of filenames or order; repeated submissions open the existing analysis. One analysis per user runs at a time in this app process, with additional submissions queued automatically. The queue and concurrent-submission lock are process-local; multiple app replicas would require a shared queue and database uniqueness constraint. Legacy Markdown-only memos lack source files and cannot be matched automatically. Completed steps are saved and reused on retry. After an app restart, open the company from history and select Resume. Cancellation takes effect between bounded provider requests. A model-request budget defaults to 80 and can be increased if reached. Input/output token usage is recorded; dollar cost is unavailable until pricing is configured externally. Source length determines runtime and usage; evidence extraction processes up to four segments per model call.
 
 Each run is an immutable research/input snapshot for analytical purposes. Start a new analysis to refresh public research or change original inputs. Interrupted runs retain their original inputs and retrieved evidence. Very large collected evidence is stopped with an explicit context-limit error rather than silently truncated.
 

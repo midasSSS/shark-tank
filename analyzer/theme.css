@@ -39,6 +39,8 @@ button:focus-visible, summary:focus-visible { outline: 2px solid #aaa !important
 [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"] { text-align: left; justify-content: flex-start; border-color: transparent; background: transparent; padding: .6rem .65rem; }
 [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"] p { font-size: .78rem; line-height: 1.5; color: #999; }
 [data-testid="stSidebar"] [class*="st-key-history-"] button { justify-content: flex-start !important; text-align: left !important; }
+[data-testid="stSidebar"] [class*="st-key-history-"] button > div,
+[data-testid="stSidebar"] [class*="st-key-history-"] button > div > span { width: 100%; justify-content: flex-start !important; text-align: left !important; margin-left: 0; padding-left: 0; }
 [data-testid="stSidebar"] [class*="st-key-history-"] [data-testid="stMarkdownContainer"] { width: 100%; text-align: left !important; }
 [data-testid="stSidebar"] [class*="st-key-history-"] p { text-align: left !important; }
 [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"]:hover { background: #1b1b1b; }
@@ -77,6 +79,9 @@ button:focus-visible, summary:focus-visible { outline: 2px solid #aaa !important
 .st-key-decision-card [data-testid="stMarkdownContainer"] > p:first-child > strong:only-child { font-size: 1.4rem; letter-spacing: -.03em; color: #fafafa; }
 .st-key-decision-card p { color: #bbb; font-size: .93rem; line-height: 1.85; }
 .st-key-decision-card strong { color: #e5e5e5; }
+.st-key-memo-actions { display: flex; justify-content: flex-end; }
+.st-key-memo-actions button { white-space: nowrap; min-width: 112px; }
+.st-key-memo-title h2 { font-size: 2.25rem !important; line-height: 1.12 !important; letter-spacing: -.045em !important; font-weight: 560 !important; margin-bottom: .45rem !important; }
 @media (min-width: 1100px) { .st-key-method-column { padding-left: 8px; } }
 @media (max-width: 900px) { [data-testid="stMainBlockContainer"] { padding: 1.4rem 1.5rem 3rem; } .method-panel { padding: 22px 18px 0; } .private-label { display: none; } }
 @media (max-width: 1000px) {

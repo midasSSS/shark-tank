@@ -12,14 +12,18 @@ from test_analyzer import economics, assessment
 
 
 class UITests(unittest.TestCase):
-    def test_local_form_and_empty_company_validation(self):
+    def test_upload_only_form_and_missing_file_validation(self):
         with patch.dict(os.environ, {"LOCAL_MODE": "1"}):
             app = AppTest.from_file("run.py").run(timeout=20)
             self.assertFalse(app.exception)
             self.assertEqual(app.title[0].value, "Investment Analyzer")
             self.assertNotIn("Sign in", [button.label for button in app.button])
             next(button for button in app.button if button.label == "Analyze investment").click().run()
-            self.assertTrue(any("company name" in message.value for message in app.error))
+            self.assertTrue(any("Upload at least one file" in message.value for message in app.error))
+            self.assertFalse(app.text_input)
+            self.assertFalse(app.text_area)
+            self.assertFalse(app.selectbox)
+            self.assertFalse(app.number_input)
 
     def test_completed_result_and_sensitivity(self):
         with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"LOCAL_MODE": "1"}):
@@ -41,6 +45,8 @@ class UITests(unittest.TestCase):
                 self.assertFalse(app.exception)
                 self.assertTrue(any("INVEST" in markdown.value for markdown in app.markdown))
                 self.assertTrue(any("100×" in metric.label for metric in app.metric))
+                self.assertIn("Delete analysis", [button.label for button in app.button])
+                self.assertIn("Save as PDF", [button.label for button in app.get("download_button")])
 
     def test_cloud_mode_requires_configuration(self):
         with patch.dict(os.environ, {"LOCAL_MODE": "0"}):

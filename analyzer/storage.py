@@ -1,4 +1,6 @@
 import json
+import base64
+import hashlib
 import os
 import threading
 from datetime import datetime, timezone
@@ -10,6 +12,11 @@ MARKER = "investment-analyzer-v2"
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def document_fingerprint(documents):
+    hashes = sorted({hashlib.sha256(base64.b64decode(doc["data"])).hexdigest() for doc in documents})
+    return hashlib.sha256("|".join(hashes).encode()).hexdigest() if hashes else None
 
 
 class Repository:
@@ -30,6 +37,7 @@ class Repository:
                  "created_at": now(), "updated_at": now(), "status": "queued", "phase": "Queued",
                  "inputs": inputs, "documents": documents, "steps": {}, "usage": [], "errors": [],
                  "model": inputs["model"], "prompt_version": "2026-09-invest-pass-v1"}
+        state["document_fingerprint"] = document_fingerprint(documents)
         if self.client:
             self.client.table("memos").insert({"id": state["id"], "owner_id": self.owner,
                 "company_name": state["company_name"], "memo_content": json.dumps(state),
@@ -37,6 +45,27 @@ class Repository:
         else:
             self.save(state)
         return state
+
+    def find_duplicate(self, documents):
+        fingerprint = document_fingerprint(documents)
+        if not fingerprint:
+            return None
+        if self.client:
+            offset = 0
+            while True:
+                rows = self.client.table("memos").select("memo_content").eq("owner_id", self.owner).order("created_at", desc=True).range(offset, offset + 49).execute().data
+                for row in rows:
+                    state = self.decode(row["memo_content"])
+                    if state and (state.get("document_fingerprint") or document_fingerprint(state.get("documents", []))) == fingerprint:
+                        return state
+                if len(rows) < 50:
+                    return None
+                offset += 50
+        for record in self.list():
+            state = self.load(record["id"])
+            if state and (state.get("document_fingerprint") or document_fingerprint(state.get("documents", []))) == fingerprint:
+                return state
+        return None
 
     def save(self, state: dict):
         with self.lock:
@@ -71,6 +100,25 @@ class Repository:
             return value if isinstance(value, dict) and value.get("format") == MARKER else None
         except (ValueError, TypeError):
             return None
+
+    def delete(self, identifier: str) -> None:
+        """Delete one analysis and its embedded documents within the owner's scope."""
+        from uuid import UUID
+        UUID(identifier)
+        if self.client:
+            self.client.table("memos").delete().eq("id", identifier).eq("owner_id", self.owner).execute()
+        else:
+            with self.lock:
+                (self.root / f"{identifier}.json").unlink(missing_ok=True)
+
+    def delete_legacy(self, filename: str) -> None:
+        """Only local Markdown memos directly inside the history directory."""
+        if self.client:
+            raise ValueError("Local files cannot be deleted through cloud storage.")
+        path = Path(filename)
+        if path.is_symlink() or path.resolve().parent != self.root.resolve().parent or path.suffix != ".md":
+            raise ValueError("Not a local history memo.")
+        path.unlink(missing_ok=True)
 
     def list(self) -> list[dict]:
         if self.client:
