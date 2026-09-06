@@ -64,12 +64,16 @@ def analysis_header(record, repo, manager, owner, title=None, date=None, pdf_mar
     date = date or str(record.get("created_at", ""))[:10]
     with st.container(key="memo-title"):
         st.header(title)
+    date_column, decision_column, action_column = st.columns([3.1, 1.6, 2], vertical_alignment="center")
+    with date_column:
+        if date:
+            st.caption(f"Analyzed {date}")
     action = record.get("investment_action", "undecided")
-    with st.container(key="memo-decision"):
+    with decision_column:
         selected = st.segmented_control(
             "My decision", ["undecided", "buy", "pass"], default=action,
-            format_func=lambda value: {"undecided": "Undecided", "buy": "Buy", "pass": "Pass"}[value],
-            key="investment-action-" + record["id"], width="content"
+            format_func=lambda value: {"undecided": "🤔", "buy": "✅", "pass": "❌"}[value],
+            key="investment-action-" + record["id"], label_visibility="collapsed", width="content"
         )
     if selected and selected != action:
         try:
@@ -79,10 +83,6 @@ def analysis_header(record, repo, manager, owner, title=None, date=None, pdf_mar
         else:
             st.session_state.history_notice = f"Marked {title} as {selected}."
             st.rerun()
-    date_column, action_column = st.columns([4, 2], vertical_alignment="center")
-    with date_column:
-        if date:
-            st.caption(f"Analyzed {date}")
     with action_column:
         with st.popover("Actions", icon=":material/more_horiz:", width="content", key="memo-actions"):
             if pdf_markdown is not None:
