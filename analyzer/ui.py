@@ -64,17 +64,30 @@ def analysis_header(record, repo, manager, owner, title=None, date=None, pdf_mar
     date = date or str(record.get("created_at", ""))[:10]
     with st.container(key="memo-title"):
         st.header(title)
-    date_column, decision_column, action_column = st.columns([3.1, 1.6, 2], vertical_alignment="center")
-    with date_column:
-        if date:
-            st.caption(f"Analyzed {date}")
-    action = record.get("investment_action", "undecided")
-    with decision_column:
-        selected = st.segmented_control(
-            "My decision", ["pass", "undecided", "buy"], default=action,
-            format_func=lambda value: {"undecided": "🤔", "buy": "✅", "pass": "❌"}[value],
-            key="investment-action-" + record["id"], label_visibility="collapsed", width="content"
-        )
+    with st.container(key="memo-meta"):
+        date_column, decision_column, action_column = st.columns([1, 1, 1], vertical_alignment="center")
+        with date_column:
+            if date:
+                st.caption(f"Analyzed {date}")
+        action = record.get("investment_action", "undecided")
+        with decision_column:
+            selected = st.segmented_control(
+                "My decision", ["pass", "undecided", "buy"], default=action,
+                format_func=lambda value: {"undecided": "🤔", "buy": "✅", "pass": "❌"}[value],
+                key="investment-action-" + record["id"], label_visibility="collapsed", width="content"
+            )
+        with action_column:
+            with st.popover("Actions", icon=":material/more_horiz:", width="content", key="memo-actions"):
+                if pdf_markdown is not None:
+                    pdf = memo_pdf(title, date, pdf_markdown)
+                    filename = re.sub(r"[^A-Za-z0-9._-]+", "-", title).strip("-").lower() or "investment-memo"
+                    st.download_button("Save as PDF", pdf, file_name=f"{filename}.pdf",
+                                       mime="application/pdf", icon=":material/picture_as_pdf:", width="stretch")
+                if st.button("Rename", icon=":material/edit:", key="rename-analysis-" + record["id"], width="stretch"):
+                    rename_analysis(record, repo)
+                if st.button("Delete analysis", icon=":material/delete:", key="delete-analysis-" + record["id"],
+                             disabled=manager.active((owner, record["id"])), width="stretch"):
+                    delete_analysis(record, repo, manager, owner)
     if selected and selected != action:
         try:
             repo.set_investment_action(record["id"], selected, legacy="format" not in record)
@@ -83,18 +96,6 @@ def analysis_header(record, repo, manager, owner, title=None, date=None, pdf_mar
         else:
             st.session_state.history_notice = f"Marked {title} as {selected}."
             st.rerun()
-    with action_column:
-        with st.popover("Actions", icon=":material/more_horiz:", width="content", key="memo-actions"):
-            if pdf_markdown is not None:
-                pdf = memo_pdf(title, date, pdf_markdown)
-                filename = re.sub(r"[^A-Za-z0-9._-]+", "-", title).strip("-").lower() or "investment-memo"
-                st.download_button("Save as PDF", pdf, file_name=f"{filename}.pdf",
-                                   mime="application/pdf", icon=":material/picture_as_pdf:", width="stretch")
-            if st.button("Rename", icon=":material/edit:", key="rename-analysis-" + record["id"], width="stretch"):
-                rename_analysis(record, repo)
-            if st.button("Delete analysis", icon=":material/delete:", key="delete-analysis-" + record["id"],
-                         disabled=manager.active((owner, record["id"])), width="stretch"):
-                delete_analysis(record, repo, manager, owner)
 
 
 def auth(app):
